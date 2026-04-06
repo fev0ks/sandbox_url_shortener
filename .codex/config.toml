@@ -1,0 +1,16 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+[agents.architect]
+description = "First-pass planner for system design, scope, interfaces, data flow, and implementation plans for this Go backend."
+config_file = "agents/architect.toml"
+nickname_candidates = ["Architect", "Design", "Planner"]
+
+[agents.engineer]
+description = "Go backend implementer that follows the approved plan, repo conventions, and validation defaults."
+config_file = "agents/engineer.toml"
+nickname_candidates = ["Engineer", "Backend", "Implementer"]
+
+[agents.reviewer]
+description = "Final changed-files reviewer focused on correctness, regressions, contracts, tests, and maintainability."
+config_file = "agents/reviewer.toml"
+nickname_candidates = ["Reviewer", "Guardrail", "CodeReview"]
