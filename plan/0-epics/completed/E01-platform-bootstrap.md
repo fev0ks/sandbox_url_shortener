@@ -1,5 +1,7 @@
 # E01 - Platform Bootstrap
 
+Status: completed
+
 ## Summary
 
 Foundation epic for bringing the service to a runnable local baseline with clear runtime boundaries.

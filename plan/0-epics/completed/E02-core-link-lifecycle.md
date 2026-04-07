@@ -1,5 +1,7 @@
 # E02 - Core Link Lifecycle
 
+Status: completed
+
 ## Summary
 
 Core product epic for creating, storing, resolving, and administrating short links without any async
