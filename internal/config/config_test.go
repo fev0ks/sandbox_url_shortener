@@ -6,8 +6,16 @@ import (
 	"testing"
 )
 
+func mustUnsetenv(t *testing.T, key string) {
+	t.Helper()
+
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+}
+
 func TestLoad_MissingDBDSN(t *testing.T) {
-	os.Unsetenv("DB_DSN")
+	mustUnsetenv(t, "DB_DSN")
 	_, err := Load(context.Background())
 	if err == nil {
 		t.Fatal("expected error for missing DB_DSN, got nil")
@@ -42,9 +50,9 @@ func TestLoad_ValidConfig(t *testing.T) {
 
 func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("DB_DSN", "postgres://localhost/test")
-	os.Unsetenv("APP_PORT")
-	os.Unsetenv("WORKER_ADMIN_PORT")
-	os.Unsetenv("LOG_LEVEL")
+	mustUnsetenv(t, "APP_PORT")
+	mustUnsetenv(t, "WORKER_ADMIN_PORT")
+	mustUnsetenv(t, "LOG_LEVEL")
 
 	cfg, err := Load(context.Background())
 	if err != nil {

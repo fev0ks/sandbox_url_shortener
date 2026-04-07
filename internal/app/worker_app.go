@@ -52,12 +52,12 @@ func (w *WorkerApp) Run(ctx context.Context) {
 
 	<-ctx.Done()
 	w.log.Info("shutdown signal received")
-	w.Shutdown()
+	w.Shutdown(ctx)
 }
 
 // Shutdown gracefully drains the HTTP server and closes all resources in LIFO order.
-func (w *WorkerApp) Shutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (w *WorkerApp) Shutdown(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
 	if err := w.srv.Shutdown(ctx); err != nil {
@@ -69,10 +69,6 @@ func (w *WorkerApp) Shutdown() {
 			w.log.Error("closer error", "error", err)
 		}
 	}
-}
-
-func (w *WorkerApp) addCloser(fn func() error) {
-	w.closers = append(w.closers, fn)
 }
 
 func (w *WorkerApp) initConfig(ctx context.Context) error {

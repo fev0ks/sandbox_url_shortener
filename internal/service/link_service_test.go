@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -24,18 +25,23 @@ type mockLinkRepo struct {
 func (m *mockLinkRepo) Create(ctx context.Context, link *domain.Link) error {
 	return m.createFn(ctx, link)
 }
+
 func (m *mockLinkRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
 	return m.getByIDFn(ctx, id)
 }
+
 func (m *mockLinkRepo) Disable(ctx context.Context, id uuid.UUID) error {
 	return m.disableFn(ctx, id)
 }
+
 func (m *mockLinkRepo) Enable(ctx context.Context, id uuid.UUID) error {
 	return m.enableFn(ctx, id)
 }
+
 func (m *mockLinkRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	return m.softDeleteFn(ctx, id)
 }
+
 func (m *mockLinkRepo) ResolveAndIncrement(ctx context.Context, shortCode string) (*domain.Link, error) {
 	return m.resolveAndIncrementFn(ctx, shortCode)
 }
@@ -121,7 +127,7 @@ func TestGetByID_NotFound(t *testing.T) {
 	svc := NewLinkService(repo, testLogger())
 
 	_, err := svc.GetByID(context.Background(), uuid.New())
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
 }
@@ -153,7 +159,7 @@ func TestResolve_Gone(t *testing.T) {
 	svc := NewLinkService(repo, testLogger())
 
 	_, err := svc.Resolve(context.Background(), "abc1234")
-	if err != domain.ErrLinkGone {
+	if !errors.Is(err, domain.ErrLinkGone) {
 		t.Errorf("expected ErrLinkGone, got: %v", err)
 	}
 }
@@ -167,7 +173,7 @@ func TestSoftDelete_NotFound(t *testing.T) {
 	svc := NewLinkService(repo, testLogger())
 
 	err := svc.SoftDelete(context.Background(), uuid.New())
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
 }

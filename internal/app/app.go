@@ -17,9 +17,6 @@ import (
 	"sandbox_url_shortener/internal/platform/logger"
 	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/internal/platform/middleware"
-	"sandbox_url_shortener/internal/repository/postgres"
-	"sandbox_url_shortener/internal/service"
-	"sandbox_url_shortener/internal/transport/http/stdlib/handler"
 )
 
 // App is the composition root for the api-http-stdlib service.
@@ -27,6 +24,7 @@ type App struct {
 	cfg     *config.Config
 	log     *slog.Logger
 	pool    *pgxpool.Pool
+	di      *container
 	srv     *http.Server
 	closers []func() error
 }
@@ -43,9 +41,14 @@ func NewApp(ctx context.Context) (*App, error) {
 	if err := a.initDB(ctx); err != nil {
 		return nil, fmt.Errorf("init db: %w", err)
 	}
+	a.initContainer()
 	a.initHTTPServer()
 
 	return a, nil
+}
+
+func (a *App) initContainer() {
+	a.di = newContainer(a.cfg, a.log, a.pool)
 }
 
 // Run starts the HTTP server and blocks until a shutdown signal is received.
@@ -62,12 +65,12 @@ func (a *App) Run(ctx context.Context) {
 
 	<-ctx.Done()
 	a.log.Info("shutdown signal received")
-	a.Shutdown()
+	a.Shutdown(ctx)
 }
 
 // Shutdown gracefully drains the HTTP server and closes all resources in LIFO order.
-func (a *App) Shutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (a *App) Shutdown(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
 	if err := a.srv.Shutdown(ctx); err != nil {
@@ -116,12 +119,6 @@ func (a *App) initDB(ctx context.Context) error {
 }
 
 func (a *App) initHTTPServer() {
-	// Repository → Service → Handler wiring.
-	linkRepo := postgres.NewLinkRepo(a.pool)
-	linkSvc := service.NewLinkService(linkRepo, a.log)
-	linkH := handler.NewLinkHandler(linkSvc, a.log, a.cfg.BaseURL)
-	redirectH := handler.NewRedirectHandler(linkSvc, a.log)
-
 	mux := http.NewServeMux()
 
 	// Platform routes.
@@ -132,14 +129,14 @@ func (a *App) initHTTPServer() {
 	mux.Handle("GET /metrics", metrics.Handler())
 
 	// Link CRUD API.
-	mux.HandleFunc("POST /api/v1/links", linkH.Create)
-	mux.HandleFunc("GET /api/v1/links/{id}", linkH.GetByID)
-	mux.HandleFunc("POST /api/v1/links/{id}/disable", linkH.Disable)
-	mux.HandleFunc("POST /api/v1/links/{id}/enable", linkH.Enable)
-	mux.HandleFunc("DELETE /api/v1/links/{id}", linkH.Delete)
+	mux.HandleFunc("POST /api/v1/links", a.di.linkHandler.Create)
+	mux.HandleFunc("GET /api/v1/links/{id}", a.di.linkHandler.GetByID)
+	mux.HandleFunc("POST /api/v1/links/{id}/disable", a.di.linkHandler.Disable)
+	mux.HandleFunc("POST /api/v1/links/{id}/enable", a.di.linkHandler.Enable)
+	mux.HandleFunc("DELETE /api/v1/links/{id}", a.di.linkHandler.Delete)
 
 	// Redirect (catch-all, registered last).
-	mux.HandleFunc("GET /{shortCode}", redirectH.Redirect)
+	mux.HandleFunc("GET /{shortCode}", a.di.redirectHandler.Redirect)
 
 	chainedHandler := middleware.Chain(a.log, mux)
 

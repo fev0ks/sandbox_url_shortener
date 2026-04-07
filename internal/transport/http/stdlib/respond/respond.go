@@ -19,22 +19,38 @@ type errorDetail struct {
 
 // Error writes a JSON error response with the standard shape.
 func Error(w http.ResponseWriter, statusCode int, code, message, requestID string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(errorBody{
+	body, err := json.Marshal(errorBody{
 		Error: errorDetail{
 			Code:      code,
 			Message:   message,
 			RequestID: requestID,
 		},
 	})
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	if _, err := w.Write(body); err != nil {
+		return
+	}
 }
 
 // JSON writes a JSON success response.
 func JSON(w http.ResponseWriter, statusCode int, data any) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if data != nil {
-		_ = json.NewEncoder(w).Encode(data)
+		if _, err := w.Write(body); err != nil {
+			return
+		}
 	}
 }

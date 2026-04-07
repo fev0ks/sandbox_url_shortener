@@ -67,10 +67,14 @@ Default flow for very small clear changes:
 ## Validation Defaults
 
 Prefer the smallest meaningful validation first:
-- `go test ./...`
-- `go build ./...`
+- `task test`
+- `task build`
+- `task lint`
 
-Add lint, `make` targets, or broader validation only after they exist in the repository.
+Use `task format` when Go files need formatting.
+
+Keep `Makefile` for runtime and migration workflows. Use `Taskfile.yaml` as the default local
+quality gate entrypoint.
 
 ## Docs Lifecycle
 
