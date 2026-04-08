@@ -16,15 +16,21 @@ import (
 
 const maxCollisionRetries = 5
 
-// LinkService implements domain.LinkService.
+// cacheTTLCap is the maximum lifetime of a cached redirect entry. The
+// effective TTL is min(cacheTTLCap, time_until_expires_at).
+const cacheTTLCap = 24 * time.Hour
+
+// LinkService implements the shortener business use cases consumed by transport handlers.
 type LinkService struct {
-	repo domain.LinkRepository
-	log  *slog.Logger
+	repo  domain.LinkRepository
+	cache domain.LinkCache // optional; nil disables the cache path
+	log   *slog.Logger
 }
 
-// NewLinkService creates a new link service.
-func NewLinkService(repo domain.LinkRepository, log *slog.Logger) *LinkService {
-	return &LinkService{repo: repo, log: log}
+// NewLinkService creates a new link service. Pass a nil cache to disable
+// cache-aside; the service then talks to the repository directly.
+func NewLinkService(repo domain.LinkRepository, cache domain.LinkCache, log *slog.Logger) *LinkService {
+	return &LinkService{repo: repo, cache: cache, log: log}
 }
 
 // Create generates a UUIDv7 and short code, then persists a new link.
@@ -95,12 +101,14 @@ func (s *LinkService) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, 
 	return link, nil
 }
 
-// Disable marks a link as disabled.
+// Disable marks a link as disabled and invalidates any cached redirect entry.
 func (s *LinkService) Disable(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
 	s.log.DebugContext(ctx, "disabling link in service", slog.String("link_id", id.String()))
-	if err := s.repo.Disable(ctx, id); err != nil {
+	shortCode, err := s.repo.Disable(ctx, id)
+	if err != nil {
 		return nil, err
 	}
+	s.invalidate(ctx, shortCode, "disable")
 	link, err := s.repo.GetByID(ctx, id)
 	if err == nil {
 		s.log.DebugContext(ctx, "link disabled in service", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
@@ -108,12 +116,15 @@ func (s *LinkService) Disable(ctx context.Context, id uuid.UUID) (*domain.Link, 
 	return link, err
 }
 
-// Enable re-enables a previously disabled link.
+// Enable re-enables a previously disabled link and invalidates any cached entry
+// so the next redirect re-warms the cache from PostgreSQL.
 func (s *LinkService) Enable(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
 	s.log.DebugContext(ctx, "enabling link in service", slog.String("link_id", id.String()))
-	if err := s.repo.Enable(ctx, id); err != nil {
+	shortCode, err := s.repo.Enable(ctx, id)
+	if err != nil {
 		return nil, err
 	}
+	s.invalidate(ctx, shortCode, "enable")
 	link, err := s.repo.GetByID(ctx, id)
 	if err == nil {
 		s.log.DebugContext(ctx, "link enabled in service", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
@@ -121,23 +132,114 @@ func (s *LinkService) Enable(ctx context.Context, id uuid.UUID) (*domain.Link, e
 	return link, err
 }
 
-// SoftDelete marks a link as deleted.
+// SoftDelete marks a link as deleted and invalidates any cached entry.
 func (s *LinkService) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	s.log.DebugContext(ctx, "soft deleting link in service", slog.String("link_id", id.String()))
-	return s.repo.SoftDelete(ctx, id)
+	shortCode, err := s.repo.SoftDelete(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.invalidate(ctx, shortCode, "delete")
+	return nil
+}
+
+// invalidate is a best-effort cache.Delete. Errors are logged and swallowed
+// so cache flakiness can never block a state-change response.
+func (s *LinkService) invalidate(ctx context.Context, shortCode, op string) {
+	if s.cache == nil {
+		return
+	}
+	if err := s.cache.Delete(ctx, shortCode); err != nil {
+		s.log.WarnContext(ctx, "cache invalidation failed",
+			"short_code", shortCode, "op", op, "error", err)
+	}
 }
 
 // Resolve resolves a short code for redirect.
+//
+// Cache-aside flow:
+//  1. Try the cache. On error, log warn and treat as miss (fail-open).
+//  2. On hit AND MaxClicks == 0 AND not expired, increment the authoritative
+//     redirect counter in PostgreSQL via a lightweight touch query, then
+//     synthesize a domain.Link from the cache payload.
+//  3. Otherwise (miss, expired-cache, or capped link) fall through to the
+//     repository, which atomically increments redirect_count, then warm the
+//     cache best-effort.
 func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Link, error) {
 	s.log.DebugContext(ctx, "resolving short code", slog.String("short_code", shortCode))
+
+	now := time.Now().UTC()
+	if s.cache != nil {
+		cached, err := s.cache.Get(ctx, shortCode)
+		if err != nil {
+			s.log.WarnContext(ctx, "link cache get failed; falling back to db",
+				"error", err, "short_code", shortCode)
+		} else if cached != nil && cached.MaxClicks == 0 && !isExpired(cached.ExpiresAt, now) {
+			if err := s.repo.TouchRedirect(ctx, shortCode); err != nil {
+				return nil, err
+			}
+			s.log.DebugContext(ctx, "redirect served from cache after touch", slog.String("short_code", shortCode))
+			return &domain.Link{
+				ShortCode:   shortCode,
+				OriginalURL: cached.OriginalURL,
+				MaxClicks:   cached.MaxClicks,
+				ExpiresAt:   cached.ExpiresAt,
+			}, nil
+		}
+	}
+
 	link, err := s.repo.ResolveAndIncrement(ctx, shortCode)
 	if err != nil {
 		return nil, err
 	}
+
+	if s.cache != nil {
+		s.warmCache(ctx, link, now)
+	}
+
 	s.log.DebugContext(ctx, "short code resolved",
 		slog.String("short_code", shortCode),
 		slog.String("link_id", link.ID.String()),
 		slog.Int64("redirect_count", link.RedirectCount),
 	)
 	return link, nil
+}
+
+// warmCache writes the resolved link into the cache best-effort. Errors are
+// logged and swallowed — they must never affect the redirect response.
+func (s *LinkService) warmCache(ctx context.Context, link *domain.Link, now time.Time) {
+	ttl := computeTTL(link.ExpiresAt, now)
+	if ttl <= 0 {
+		return
+	}
+	entry := &domain.CachedLink{
+		OriginalURL: link.OriginalURL,
+		MaxClicks:   link.MaxClicks,
+		ExpiresAt:   link.ExpiresAt,
+	}
+	if err := s.cache.Set(ctx, link.ShortCode, entry, ttl); err != nil {
+		s.log.WarnContext(ctx, "link cache set failed",
+			"error", err, "short_code", link.ShortCode)
+	}
+}
+
+// computeTTL returns min(cacheTTLCap, expiresAt - now) with a floor of zero.
+// A nil expiresAt yields the cap.
+func computeTTL(expiresAt *time.Time, now time.Time) time.Duration {
+	if expiresAt == nil {
+		return cacheTTLCap
+	}
+	remaining := expiresAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining > cacheTTLCap {
+		return cacheTTLCap
+	}
+	return remaining
+}
+
+// isExpired reports whether expiresAt has passed. A nil expiresAt never expires.
+func isExpired(expiresAt *time.Time, now time.Time) bool {
+	return expiresAt != nil && !expiresAt.After(now)
 }

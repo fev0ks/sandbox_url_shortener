@@ -3,11 +3,14 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 
 	"sandbox_url_shortener/services/shortener/internal/config"
 	"sandbox_url_shortener/services/shortener/internal/repository/postgres"
+	redisrepo "sandbox_url_shortener/services/shortener/internal/repository/redis"
 	"sandbox_url_shortener/services/shortener/internal/service"
 	"sandbox_url_shortener/services/shortener/internal/transport/http/stdlib/link"
 	"sandbox_url_shortener/services/shortener/internal/transport/http/stdlib/redirect"
@@ -27,7 +30,10 @@ import (
 //  3. reference it from initHTTPServer (or wherever it is needed)
 type container struct {
 	// Repositories — store-specific data access.
-	linkRepo *postgres.LinkRepo
+	linkRepo         *postgres.LinkRepo
+	linkCache        *redisrepo.LinkCache
+	rateLimiter      *redisrepo.FixedWindowLimiter
+	idempotencyStore *redisrepo.IdempotencyStore
 
 	// Services — business logic.
 	linkSvc *service.LinkService
@@ -42,17 +48,30 @@ type container struct {
 // It returns an error so future components that can fail at construction time
 // (Redis client, Kafka producer, ClickHouse pool, third-party SDKs, ...) can
 // surface that failure cleanly through NewApp instead of panicking.
-func newContainer(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool) *container {
+func newContainer(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, redisClient *goredis.Client) *container {
 	c := &container{}
 
 	// Repositories.
 	c.linkRepo = postgres.NewLinkRepo(pool)
+	c.linkCache = redisrepo.NewLinkCache(redisClient)
+	c.rateLimiter = redisrepo.NewFixedWindowLimiter(
+		redisClient,
+		cfg.RateLimitPerMin,
+		time.Minute,
+	)
+	c.idempotencyStore = redisrepo.NewIdempotencyStore(redisClient)
 
 	// Services.
-	c.linkSvc = service.NewLinkService(c.linkRepo, log)
+	c.linkSvc = service.NewLinkService(c.linkRepo, c.linkCache, log)
 
 	// HTTP feature handlers.
-	c.linkHandler = link.NewHandler(c.linkSvc, log, cfg.BaseURL)
+	c.linkHandler = link.NewHandler(
+		c.linkSvc,
+		log,
+		cfg.BaseURL,
+		c.idempotencyStore,
+		c.rateLimiter,
+	)
 	c.redirectHandler = redirect.NewHandler(c.linkSvc, log)
 
 	return c

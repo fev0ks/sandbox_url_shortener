@@ -16,26 +16,53 @@ import (
 
 	"github.com/google/uuid"
 
+	"sandbox_url_shortener/internal/platform/httppolicy"
+	"sandbox_url_shortener/internal/platform/requestmeta"
 	"sandbox_url_shortener/services/shortener/internal/domain"
 	"sandbox_url_shortener/services/shortener/internal/transport/http/stdlib/respond"
 )
 
+// createRateLimitNamespace is the key prefix for per-IP create rate limits.
+const createRateLimitNamespace = "ratelimit:create"
+
 // Handler holds the dependencies needed to serve the link CRUD API.
 type Handler struct {
-	svc     domain.LinkService
-	log     *slog.Logger
-	baseURL string
+	svc           Service
+	log           *slog.Logger
+	baseURL       string
+	idempotency   IdempotencyStore  // optional response cache for Idempotency-Key
+	rateLimiter httppolicy.Limiter // optional per-IP limiter for fresh creates
+}
+
+// Service is the exact slice of business logic the link CRUD transport needs.
+// It lives with the consumer so the transport does not depend on a wider
+// service-shaped interface than necessary.
+type Service interface {
+	Create(ctx context.Context, input domain.CreateLinkInput) (*domain.Link, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error)
+	Disable(ctx context.Context, id uuid.UUID) (*domain.Link, error)
+	Enable(ctx context.Context, id uuid.UUID) (*domain.Link, error)
+	SoftDelete(ctx context.Context, id uuid.UUID) error
 }
 
 // NewHandler creates a new link HTTP handler.
-func NewHandler(svc domain.LinkService, log *slog.Logger, baseURL string) *Handler {
-	return &Handler{svc: svc, log: log, baseURL: baseURL}
+func NewHandler(
+	svc Service,
+	log *slog.Logger,
+	baseURL string,
+	idempotency IdempotencyStore,
+	rateLimiter httppolicy.Limiter,
+) *Handler {
+	return &Handler{
+		svc:           svc,
+		log:           log,
+		baseURL:       baseURL,
+		idempotency:   idempotency,
+		rateLimiter: rateLimiter,
+	}
 }
 
 // Register wires the link routes onto the given mux.
-//
-// All routes for this feature live here so a single grep tells you the
-// HTTP surface of the link domain.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/links", h.Create)
 	mux.HandleFunc("GET /api/v1/links/{id}", h.GetByID)
@@ -44,8 +71,92 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/links/{id}", h.Delete)
 }
 
-// Create handles POST /api/v1/links.
+// Create handles POST /api/v1/links. Idempotency-Key replay/conflict runs
+// first so cached replays bypass the rate limiter. Fresh creates then check
+// the per-IP limiter inside createInner before spending work.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+	fresh := http.HandlerFunc(h.createInner)
+	if key := r.Header.Get("Idempotency-Key"); key != "" && h.idempotency != nil {
+		h.createWithIdempotency(w, r, key, fresh)
+		return
+	}
+	fresh.ServeHTTP(w, r)
+}
+
+// createWithIdempotency wraps a fresh-create handler with the Stripe-style key flow.
+func (h *Handler) createWithIdempotency(w http.ResponseWriter, r *http.Request, key string, fresh http.Handler) {
+	if len(key) > maxIdempotencyKeyLen {
+		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_idempotency_key",
+			"Idempotency-Key exceeds maximum length")
+		return
+	}
+
+	body, err := readAllAndRestore(r)
+	if err != nil {
+		h.log.WarnContext(r.Context(), "failed to read body for idempotency", "error", err)
+		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_body", "failed to read request body")
+		return
+	}
+	bodyHash := hashBody(body)
+	storeKey := IdempotencyStoreKey(key)
+
+	rec, err := h.idempotency.Get(r.Context(), storeKey)
+	switch {
+	case err != nil:
+		h.log.WarnContext(r.Context(), "idempotency get failed; processing as fresh",
+			"error", err, "key", key)
+	case rec != nil && rec.BodyHash == bodyHash:
+		h.log.InfoContext(r.Context(), "idempotency replay", "key", key)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(rec.StatusCode)
+		if _, err := w.Write(rec.ResponseBody); err != nil {
+			return
+		}
+		return
+	case rec != nil && rec.BodyHash != bodyHash:
+		h.log.InfoContext(r.Context(), "idempotency conflict", "key", key)
+		respond.Error(r.Context(), w, http.StatusConflict, "idempotency_conflict",
+			"Idempotency-Key reused with a different request body")
+		return
+	}
+
+	buf := newBufferingWriter()
+	fresh.ServeHTTP(buf, r)
+
+	// Persist only successful creates (2xx). Errors are not idempotent: a
+	// transient 5xx must not pin a permanent failure to the key.
+	if buf.status >= 200 && buf.status < 300 {
+		store := &IdempotencyRecord{
+			BodyHash:     bodyHash,
+			StatusCode:   buf.status,
+			ResponseBody: append(json.RawMessage(nil), buf.body.Bytes()...),
+		}
+		if err := h.idempotency.Set(r.Context(), storeKey, store, idempotencyTTL); err != nil {
+			h.log.WarnContext(r.Context(), "idempotency set failed", "error", err, "key", key)
+		}
+	}
+	buf.flushTo(w)
+}
+
+// createInner is the fresh-create flow. It enforces the per-IP rate limit
+// (if configured), then decodes, validates, and calls the service.
+// Limiter errors fail open: a warning is logged and the request proceeds.
+func (h *Handler) createInner(w http.ResponseWriter, r *http.Request) {
+	if h.rateLimiter != nil {
+		key := httppolicy.ClientIPKey(createRateLimitNamespace, r)
+		decision, err := h.rateLimiter.Allow(r.Context(), key)
+		switch {
+		case err != nil:
+			h.log.WarnContext(r.Context(), "rate limit backend error; failing open",
+				"error", err, "key", key)
+		case !decision.Allowed:
+			h.log.InfoContext(r.Context(), "rate limit exceeded",
+				"key", key, "retry_after", decision.RetryAfter)
+			httppolicy.WriteRateLimited(w, requestmeta.RequestID(r.Context()), decision.RetryAfter)
+			return
+		}
+	}
+
 	var req CreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.log.DebugContext(r.Context(), "create link request rejected: invalid json")

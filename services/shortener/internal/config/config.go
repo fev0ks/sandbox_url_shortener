@@ -17,6 +17,10 @@ type Config struct {
 	DBDSN      string `env:"DB_DSN,required"`
 	DBMaxConns int32  `env:"DB_MAX_CONNS,default=10"`
 	BaseURL    string `env:"BASE_URL,default=http://localhost:8080"`
+	RedisAddr  string `env:"REDIS_ADDR,default=localhost:6379"`
+	RedisDB    int    `env:"REDIS_DB,default=0"`
+
+	RateLimitPerMin int `env:"RATE_LIMIT_PER_MIN,default=10"`
 }
 
 // Load reads configuration from environment variables via go-envconfig and validates it.

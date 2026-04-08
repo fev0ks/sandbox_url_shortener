@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"sandbox_url_shortener/internal/platform/logger"
 	"sandbox_url_shortener/services/shortener/internal/config"
@@ -21,6 +22,7 @@ type App struct {
 	cfg     *config.Config
 	log     *slog.Logger
 	pool    *pgxpool.Pool
+	redis   *redis.Client
 	di      *container
 	srv     *http.Server
 	closers []func() error
@@ -38,6 +40,9 @@ func NewApp(ctx context.Context) (*App, error) {
 	if err := a.initDB(ctx); err != nil {
 		return nil, fmt.Errorf("init db: %w", err)
 	}
+	if err := a.initRedis(ctx); err != nil {
+		return nil, fmt.Errorf("init redis: %w", err)
+	}
 	a.initContainer()
 	a.initHTTPServer()
 
@@ -45,7 +50,29 @@ func NewApp(ctx context.Context) (*App, error) {
 }
 
 func (a *App) initContainer() {
-	a.di = newContainer(a.cfg, a.log, a.pool)
+	a.di = newContainer(a.cfg, a.log, a.pool, a.redis)
+}
+
+// initRedis creates the Redis client and verifies connectivity at boot.
+// A failed PING is fatal: we'd rather know now than discover the cache is
+// dead on the first redirect. The client itself stays graceful at runtime
+// — service-layer code logs and degrades to PostgreSQL on transient errors.
+func (a *App) initRedis(ctx context.Context) error {
+	client := redis.NewClient(&redis.Options{
+		Addr: a.cfg.RedisAddr,
+		DB:   a.cfg.RedisDB,
+	})
+	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		if closeErr := client.Close(); closeErr != nil {
+			a.log.Warn("redis close after failed ping", "error", closeErr)
+		}
+		return fmt.Errorf("redis ping %s: %w", a.cfg.RedisAddr, err)
+	}
+	a.redis = client
+	a.addCloser(client.Close)
+	return nil
 }
 
 // Run starts the HTTP server and blocks until a shutdown signal is received.

@@ -34,7 +34,7 @@ func (a *App) buildRouter() http.Handler {
 	return middleware.Compose(mux,
 		middleware.Recovery(a.log), // 1. catch panics first
 		middleware.RequestID,       // 2. assign request_id before anything reads it
-		middleware.CorrelationID,  // 3. derives from request_id when header missing
-		middleware.Logging(a.log), // 4. logs last so status_code is final
+		middleware.CorrelationID,   // 3. derives from request_id when header missing
+		middleware.Logging(a.log),  // 4. logs last so status_code is final
 	)
 }

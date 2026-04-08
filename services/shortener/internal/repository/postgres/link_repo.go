@@ -66,33 +66,47 @@ func (r *LinkRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, err
 }
 
 // Disable sets disabled_at = now() on an active link.
-func (r *LinkRepo) Disable(ctx context.Context, id uuid.UUID) error {
+func (r *LinkRepo) Disable(ctx context.Context, id uuid.UUID) (string, error) {
 	const q = `
 		UPDATE links
 		SET disabled_at = now(), updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL`
-
-	return r.execExpectOne(ctx, q, id)
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING short_code`
+	return r.execReturningShortCode(ctx, q, id)
 }
 
 // Enable clears disabled_at on an active link.
-func (r *LinkRepo) Enable(ctx context.Context, id uuid.UUID) error {
+func (r *LinkRepo) Enable(ctx context.Context, id uuid.UUID) (string, error) {
 	const q = `
 		UPDATE links
 		SET disabled_at = NULL, updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL`
-
-	return r.execExpectOne(ctx, q, id)
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING short_code`
+	return r.execReturningShortCode(ctx, q, id)
 }
 
 // SoftDelete sets deleted_at = now() on an active link.
-func (r *LinkRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
+func (r *LinkRepo) SoftDelete(ctx context.Context, id uuid.UUID) (string, error) {
 	const q = `
 		UPDATE links
 		SET deleted_at = now(), updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL`
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING short_code`
+	return r.execReturningShortCode(ctx, q, id)
+}
 
-	return r.execExpectOne(ctx, q, id)
+// execReturningShortCode runs an UPDATE ... RETURNING short_code statement and
+// maps the no-rows case to domain.ErrNotFound.
+func (r *LinkRepo) execReturningShortCode(ctx context.Context, q string, id uuid.UUID) (string, error) {
+	var shortCode string
+	err := r.pool.QueryRow(ctx, q, id).Scan(&shortCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("link repo exec returning: %w", err)
+	}
+	return shortCode, nil
 }
 
 // ResolveAndIncrement atomically increments redirect_count and returns the link
@@ -125,6 +139,35 @@ func (r *LinkRepo) ResolveAndIncrement(ctx context.Context, shortCode string) (*
 	return r.classifyMiss(ctx, shortCode)
 }
 
+// TouchRedirect increments redirect_count for an unlimited link without
+// fetching the full row back to the application. This keeps PostgreSQL as the
+// authoritative redirect counter on cache hits while avoiding a read-back query.
+func (r *LinkRepo) TouchRedirect(ctx context.Context, shortCode string) error {
+	const q = `
+		UPDATE links
+		SET redirect_count = redirect_count + 1,
+		    last_accessed_at = now(),
+		    updated_at = now()
+		WHERE short_code = $1
+		  AND deleted_at IS NULL
+		  AND disabled_at IS NULL
+		  AND (expires_at IS NULL OR expires_at > now())
+		  AND max_clicks = 0
+		RETURNING 1`
+
+	var touched int
+	err := r.pool.QueryRow(ctx, q, shortCode).Scan(&touched)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("link repo touch redirect: %w", err)
+	}
+
+	_, classifyErr := r.classifyMiss(ctx, shortCode)
+	return classifyErr
+}
+
 // classifyMiss performs a read-only lookup on a short code to distinguish 404 from 410.
 func (r *LinkRepo) classifyMiss(ctx context.Context, shortCode string) (*domain.Link, error) {
 	const q = `
@@ -152,18 +195,6 @@ func (r *LinkRepo) classifyMiss(ctx context.Context, shortCode string) (*domain.
 
 	// Expired or max clicks reached → 410.
 	return nil, domain.ErrLinkGone
-}
-
-// execExpectOne runs a statement and returns ErrNotFound when zero rows are affected.
-func (r *LinkRepo) execExpectOne(ctx context.Context, q string, id uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, q, id)
-	if err != nil {
-		return fmt.Errorf("link repo exec: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
 }
 
 // scanLink scans a single row into a domain.Link.

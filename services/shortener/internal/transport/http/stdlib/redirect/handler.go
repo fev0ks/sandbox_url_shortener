@@ -2,6 +2,7 @@
 package redirect
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -11,12 +12,17 @@ import (
 
 // Handler holds the dependencies needed to resolve and redirect short codes.
 type Handler struct {
-	svc domain.LinkService
+	svc Resolver
 	log *slog.Logger
 }
 
+// Resolver is the exact capability the redirect transport needs.
+type Resolver interface {
+	Resolve(ctx context.Context, shortCode string) (*domain.Link, error)
+}
+
 // NewHandler creates a new redirect HTTP handler.
-func NewHandler(svc domain.LinkService, log *slog.Logger) *Handler {
+func NewHandler(svc Resolver, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
