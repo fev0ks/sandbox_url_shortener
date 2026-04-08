@@ -14,7 +14,7 @@ later.
 
 Before making changes:
 - read `AGENTS.md`
-- read `docs/skills.md`
+- read `ai/skills.md`
 - read `go.mod`
 - read the current entrypoint and nearby code
 
@@ -24,14 +24,26 @@ Before making changes:
 - Keep business logic out of handlers
 - Keep packages small and explicit
 - Prefer simple local boundaries over premature abstractions
+- Treat `services/<service>/` as the ownership boundary for service-specific code and assets
+- Keep shared cross-cutting infrastructure only under `internal/platform`
 
 ## Stack Baseline
 
 - Go `1.25`
-- HTTP API baseline is `net/http` with `cmd/api-http-stdlib`
+- HTTP API baseline is `net/http` with `services/shortener/cmd/shortener`
+- Background analytics runtime lives in `services/analytics/cmd/analytics`
 - Start simple
 - Do not introduce async infrastructure, caching, queues, or background jobs unless the task
   requires them
+
+## Repository Layout Rules
+
+- Keep service-owned config in `services/<service>/internal/config`
+- Keep service-owned migrations in `services/<service>/migrations`
+- Keep service-owned image builds in `services/<service>/Dockerfile`
+- Keep `deploy/` for orchestration only: `docker-compose`, Helm, kind, manifests, env overlays
+- Do not add new repo-root `migrations/`, `Dockerfile`, or shared config packages unless the
+  artifact is truly cross-service infrastructure
 
 ## Role Policy
 
@@ -78,5 +90,5 @@ quality gate entrypoint.
 
 ## Docs Lifecycle
 
-If behavior or architecture changes materially, update `AGENTS.md` or `docs/skills.md` in the
+If behavior or architecture changes materially, update `AGENTS.md` or `ai/skills.md` in the
 same task.

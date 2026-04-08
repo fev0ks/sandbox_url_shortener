@@ -13,7 +13,7 @@ ingress, and local deployment behavior can be exercised without using cloud infr
 ## Scope
 
 - local `kind` cluster setup
-- Helm chart for `api-http-stdlib` and `worker`
+- Helm chart for `shortener` and `analytics`
 - local values files and Helm install or upgrade workflow
 - ingress, service, probes, config, and image wiring for local Kubernetes
 - excludes external cloud providers and managed Kubernetes targets
@@ -28,7 +28,7 @@ ingress, and local deployment behavior can be exercised without using cloud infr
 ## Task Links
 
 - `E12-001-prepare-kind-cluster-bootstrap.md`
-- `E12-002-build-helm-chart-for-api-and-worker.md`
+- `E12-002-build-helm-chart-for-shortener-and-analytics.md`
 - `E12-003-wire-local-ingress-probes-and-config.md`
 - `E12-004-document-kind-and-helm-local-deploy-flow.md`
 

@@ -97,11 +97,11 @@ Reuse the existing `respond.Error` helper with code `rate_limited`, status `429`
 
 | File | Change |
 |------|--------|
-| `internal/config/config.go` | add `RateLimitCreatePerMin` |
+| `services/shortener/internal/config/config.go` | add `RateLimitCreatePerMin` |
 | `internal/platform/middleware/ratelimit.go` | new — rate-limit middleware + RateLimiter interface |
 | `internal/platform/middleware/ratelimit_test.go` | new — under/at/over/fail-open tests |
-| `internal/app/di.go` | add `rateLimiter` field if not reusing the cache |
-| `internal/app/app.go` | wrap create route with the limiter middleware |
+| `services/shortener/internal/app/di.go` | add `rateLimiter` field if not reusing the cache |
+| `services/shortener/internal/app/app.go` | wrap create route with the limiter middleware |
 | `.env` | add `RATE_LIMIT_CREATE_PER_MIN=10` |
 
 ## Progress Checklist

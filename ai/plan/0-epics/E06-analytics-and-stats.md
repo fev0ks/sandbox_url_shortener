@@ -12,7 +12,7 @@ views.
 ## Scope
 
 - ClickHouse in local stack
-- raw click events table and ingestion path from `worker`
+- raw click events table and ingestion path from `analytics`
 - stats API for short code or link detail pages
 - baseline aggregates such as total clicks, time buckets, and referrer views
 - excludes advanced BI modeling and complex pre-aggregation pipelines
@@ -20,13 +20,13 @@ views.
 ## Key Decisions
 
 - store raw events first and optimize aggregation later if needed
-- keep the worker ingestion contract simple and append-oriented
+- keep the analytics ingestion contract simple and append-oriented
 - expose only the minimum useful stats needed by MVP UI and API
 
 ## Task Links
 
 - `E06-001-add-clickhouse-to-local-stack-and-schema.md`
-- `E06-002-write-worker-events-to-clickhouse.md`
+- `E06-002-write-analytics-events-to-clickhouse.md`
 - `E06-003-add-basic-stats-query-layer.md`
 - `E06-004-expose-stats-via-api-and-ui.md`
 

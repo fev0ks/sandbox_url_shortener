@@ -17,12 +17,12 @@ feature set.
 - framework-specific transport adapters under `internal/transport/http/*`
 - reuse of shared service, repository, config, logger, and middleware concepts
 - practical comparison notes for routing, middleware, request decoding, and testing
-- excludes changing the canonical MVP runtime away from `api-http-stdlib` unless a later explicit
+- excludes changing the canonical MVP runtime away from `shortener` unless a later explicit
   decision is made
 
 ## Key Decisions
 
-- `cmd/api-http-stdlib` remains the canonical baseline
+- `services/shortener/cmd/shortener` remains the canonical baseline
 - alternative variants are added only after the main functional path is stable
 - differences must stay in transport and bootstrap layers, not leak into service or repository code
 - comparisons should be done on the same endpoints and middleware concerns

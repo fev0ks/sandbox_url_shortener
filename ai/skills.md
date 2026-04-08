@@ -51,7 +51,7 @@ before implementation.
 ### Read First In This Repo
 
 - `AGENTS.md`
-- `docs/skills.md`
+- `ai/skills.md`
 - `go.mod`
 - current entrypoint and relevant packages
 
@@ -104,7 +104,7 @@ design direction is clear.
 ### Read First In This Repo
 
 - `AGENTS.md`
-- `docs/skills.md`
+- `ai/skills.md`
 - approved architect output
 - relevant code paths
 
@@ -154,7 +154,7 @@ Use for changed-files review after implementation.
 ### Read First In This Repo
 
 - `AGENTS.md`
-- `docs/skills.md`
+- `ai/skills.md`
 - changed files
 - any task or design context linked to the change
 
@@ -167,7 +167,8 @@ Use for changed-files review after implementation.
 ## Locked Bootstrap Conventions
 
 - Agent names are `architect`, `engineer`, and `reviewer`
-- Framework baseline is stdlib-first HTTP backend via `cmd/api-http-stdlib`
+- Framework baseline is stdlib-first HTTP backend via `services/shortener/cmd/shortener`
+- Background event and analytics runtime uses `services/analytics/cmd/analytics`
 - Skills are specified in repo docs, not implemented as repo-local skill folders
 - There is no `builder` or `qa` role at bootstrap stage
-- `docs/skills.md` is the single project-local source of truth for future skill creation and use
+- `ai/skills.md` is the single project-local source of truth for future skill creation and use

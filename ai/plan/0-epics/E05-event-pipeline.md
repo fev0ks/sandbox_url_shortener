@@ -7,7 +7,8 @@ coupling.
 
 ## Goal
 
-Publish `link.visited` events from the `api` service and consume them in a `worker` process through
+Publish `link.visited` events from the `shortener` service and consume them in an `analytics`
+process through
 Kafka with operational basics such as retries and DLQ planning.
 
 ## Scope
@@ -15,7 +16,7 @@ Kafka with operational basics such as retries and DLQ planning.
 - Kafka in local Docker Compose
 - versioned `link.visited` event schema
 - producer wiring in redirect flow
-- `worker` consumer bootstrap
+- `analytics` consumer bootstrap
 - retry handling and DLQ strategy
 - excludes analytics storage implementation in ClickHouse
 
@@ -24,14 +25,14 @@ Kafka with operational basics such as retries and DLQ planning.
 - redirect success must not depend on synchronous Kafka delivery
 - event schema must be versioned from day one
 - consumer side should be designed for at-least-once processing
-- `api` and `worker` stay separate binaries inside one repository
+- `shortener` and `analytics` stay separate binaries inside one repository
 
 ## Task Links
 
 - `E05-001-add-kafka-to-local-stack-and-config.md`
 - `E05-002-define-link-visited-event-schema.md`
 - `E05-003-publish-click-events-from-redirect-flow.md`
-- `E05-004-bootstrap-worker-consumer-and-retry-path.md`
+- `E05-004-bootstrap-analytics-consumer-and-retry-path.md`
 
 ## Open Questions
 

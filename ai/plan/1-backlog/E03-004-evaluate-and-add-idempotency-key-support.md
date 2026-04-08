@@ -66,7 +66,7 @@ the middleware would need to buffer the full response body to cache it. A wrappe
 the handler package keeps it simple:
 
 ```go
-// internal/transport/http/stdlib/handler/idempotency.go
+// services/shortener/internal/transport/http/stdlib/handler/idempotency.go
 type IdempotencyStore interface {
     Get(ctx context.Context, key string) (*Record, error)
     Set(ctx context.Context, key string, rec *Record, ttl time.Duration) error
@@ -92,12 +92,12 @@ the create response is small and bounded.
 
 | File | Change |
 |------|--------|
-| `internal/transport/http/stdlib/handler/idempotency.go` | new — IdempotencyStore interface + helper |
+| `services/shortener/internal/transport/http/stdlib/handler/idempotency.go` | new — IdempotencyStore interface + helper |
 | `internal/repository/redis/idempotency_store.go` | new — Redis implementation |
-| `internal/transport/http/stdlib/handler/link_handler.go` | extend `Create` with idempotency wrap |
-| `internal/transport/http/stdlib/handler/link_handler_test.go` | new — handler-level tests with mock store |
-| `internal/app/di.go` | add `idempotencyStore` field, pass to handler |
-| `internal/config/config.go` | add `IdempotencyTTL` (default `24h`) |
+| `services/shortener/internal/transport/http/stdlib/handler/link_handler.go` | extend `Create` with idempotency wrap |
+| `services/shortener/internal/transport/http/stdlib/handler/link_handler_test.go` | new — handler-level tests with mock store |
+| `services/shortener/internal/app/di.go` | add `idempotencyStore` field, pass to handler |
+| `services/shortener/internal/config/config.go` | add `IdempotencyTTL` (default `24h`) |
 
 ## Progress Checklist
 

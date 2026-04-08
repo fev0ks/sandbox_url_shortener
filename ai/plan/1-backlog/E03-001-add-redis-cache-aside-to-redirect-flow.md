@@ -14,8 +14,8 @@ not break redirects.
 ## Scope
 
 - new Redis client wired through the App composition root with health probe
-- new `LinkCache` interface in `internal/domain/` and Redis implementation under
-  `internal/repository/redis/`
+- new `LinkCache` interface in `services/shortener/internal/domain/` and Redis implementation
+  under `internal/repository/redis/`
 - update `LinkService.Resolve` to consult the cache before calling the repository
 - cache-warm-up after a PostgreSQL miss in the resolve path
 - preserve `max_clicks` semantics: links with `max_clicks > 0` always confirm against
@@ -34,7 +34,8 @@ not break redirects.
 - cached value includes `original_url`, `max_clicks`, `redirect_count`, and `expires_at`
 - cache key format is `link:code:{short_code}`
 - TTL is `min(24h, time_until_expires_at)`; if `expires_at` is nil the TTL is 24h
-- `LinkCache` interface lives in `internal/domain/`; the service depends on the interface,
+- `LinkCache` interface lives in `services/shortener/internal/domain/`; the service depends on the
+  interface,
   not on the Redis client
 - unit tests for the service path with a mock cache cover: hit (no DB), miss (DB + warm),
   cache error (DB only)
@@ -51,7 +52,8 @@ not break redirects.
 
 ## Implementation Notes
 
-- add `REDIS_ADDR` (default `localhost:6379`) and `REDIS_DB` (default `0`) to `internal/config`
+- add `REDIS_ADDR` (default `localhost:6379`) and `REDIS_DB` (default `0`) to
+  `services/shortener/internal/config`
 - new file `internal/repository/redis/link_cache.go` implementing `domain.LinkCache`:
 
   ```go
@@ -87,13 +89,13 @@ not break redirects.
 
 | File | Change |
 |------|--------|
-| `internal/config/config.go` | add `RedisAddr`, `RedisDB` |
-| `internal/domain/link_cache.go` | new — LinkCache interface + CachedLink struct |
+| `services/shortener/internal/config/config.go` | add `RedisAddr`, `RedisDB` |
+| `services/shortener/internal/domain/link_cache.go` | new — LinkCache interface + CachedLink struct |
 | `internal/repository/redis/link_cache.go` | new — Redis implementation |
-| `internal/service/link_service.go` | extend `Resolve` with cache path; constructor takes cache |
-| `internal/service/link_service_test.go` | add mockLinkCache + 3 cache scenarios |
-| `internal/app/app.go` | add `initRedis`, register closer, pass redis to container |
-| `internal/app/di.go` | add `linkCache` field, wire into service |
+| `services/shortener/internal/service/link_service.go` | extend `Resolve` with cache path; constructor takes cache |
+| `services/shortener/internal/service/link_service_test.go` | add mockLinkCache + 3 cache scenarios |
+| `services/shortener/internal/app/app.go` | add `initRedis`, register closer, pass redis to container |
+| `services/shortener/internal/app/di.go` | add `linkCache` field, wire into service |
 | `go.mod` / `go.sum` | add `redis/go-redis/v9` |
 | `.env` | add `REDIS_ADDR=localhost:6379` |
 

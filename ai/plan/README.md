@@ -40,10 +40,10 @@ The numeric prefix is part of the workflow. Keep it so folders sort in execution
 ## Relationship To Other Docs
 
 - `AGENTS.md` defines repo-wide engineering rules and role workflow.
-- `docs/skills.md` defines which reusable skill or role mindset applies.
-- `plan/0-epics` captures the bigger product or architecture intent.
-- `plan/0-epics/completed` keeps finished epics out of the active planning surface.
-- `plan/` tracks concrete tasks and their current state.
+- `ai/skills.md` defines which reusable skill or role mindset applies.
+- `ai/plan/0-epics` captures the bigger product or architecture intent.
+- `ai/plan/0-epics/completed` keeps finished epics out of the active planning surface.
+- `ai/plan/` tracks concrete tasks and their current state.
 
 Do not duplicate repo rules in every task file. Link to them when needed.
 
@@ -70,7 +70,7 @@ Move an epic to `0-epics/completed` when:
 
 ## Epic File Structure
 
-Use the template in `plan/templates/epic.md`.
+Use the template in `ai/plan/templates/epic.md`.
 
 Each epic file should contain:
 
@@ -91,7 +91,7 @@ Each epic file should contain:
 
 ## Recommended Task File Structure
 
-Use the template in `plan/templates/task.md`.
+Use the template in `ai/plan/templates/task.md`.
 
 Each task file should contain these sections:
 

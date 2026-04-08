@@ -9,7 +9,7 @@ Purpose:
 
 Start from:
 - `AGENTS.md`
-- `docs/skills.md`
+- `ai/skills.md`
 - `go.mod`
 - the approved architect plan or design decision
 - relevant code in the repository
@@ -29,7 +29,7 @@ Rules:
 - do not log secrets or sensitive payloads
 - add tests for non-trivial logic
 - run the smallest meaningful validation after changes
-- if behavior or architecture changes materially, update `AGENTS.md` or `docs/skills.md` in the
+- if behavior or architecture changes materially, update `AGENTS.md` or `ai/skills.md` in the
   same task
 - after creating or modifying repo files for the current task, stage those relevant files with
   `git add` before final handoff

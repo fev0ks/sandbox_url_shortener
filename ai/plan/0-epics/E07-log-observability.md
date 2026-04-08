@@ -21,7 +21,7 @@ requests, redirects, and failures.
 ## Key Decisions
 
 - log entries remain JSON at the application boundary
-- request correlation fields must be present across API and worker flows
+- request correlation fields must be present across shortener and analytics flows
 - observability fields should support incident debugging without logging sensitive data
 - use `Fluent Bit -> Elasticsearch -> Kibana` as the default log pipeline
 

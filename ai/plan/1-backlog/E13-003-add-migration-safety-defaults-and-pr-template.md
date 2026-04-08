@@ -14,10 +14,10 @@ safety defaults.
 
 ## Scope
 
-- new file `migrations/postgres/.template.up.sql` with the safety preamble
+- new file `services/shortener/migrations/postgres/.template.up.sql` with the safety preamble
 - update `migrate-create` Make target (or document a wrapper) so new migrations include the
   preamble automatically
-- update `migrations/postgres/000001_create_links_table.up.sql` to include `lock_timeout` and
+- update `services/shortener/migrations/postgres/000001_create_links_table.up.sql` to include `lock_timeout` and
   `statement_timeout`
 - new file `.github/PULL_REQUEST_TEMPLATE/schema-change.md` with the checklist
 - documentation update in `docs/migrations.md` referencing both
@@ -48,7 +48,7 @@ safety defaults.
 
 ## Implementation Notes
 
-- safety preamble (target file `migrations/postgres/.template.up.sql`):
+- safety preamble (target file `services/shortener/migrations/postgres/.template.up.sql`):
 
   ```sql
   -- Safety defaults — do not remove without understanding lock impact.
@@ -94,7 +94,7 @@ safety defaults.
 ## Progress Checklist
 
 - [ ] confirm scope and assumptions
-- [ ] add `migrations/postgres/.template.up.sql`
+- [ ] add `services/shortener/migrations/postgres/.template.up.sql`
 - [ ] update `migrate-create` Make target to inject the template
 - [ ] update `000001_create_links_table.up.sql` with the safety preamble
 - [ ] add `.github/PULL_REQUEST_TEMPLATE/schema-change.md`

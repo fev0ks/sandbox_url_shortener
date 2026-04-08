@@ -73,10 +73,10 @@ not the handler. Failures must not block the underlying state change.
 
 | File | Change |
 |------|--------|
-| `internal/domain/link_repository.go` | change Disable/Enable/SoftDelete return types to `(string, error)` |
-| `internal/repository/postgres/link_repo.go` | use `RETURNING short_code` in UPDATEs |
-| `internal/service/link_service.go` | call `cache.Delete` after each mutation, swallow errors |
-| `internal/service/link_service_test.go` | extend mocks; add 6 new test cases (3 happy + 3 cache-error) |
+| `services/shortener/internal/domain/link_repository.go` | change Disable/Enable/SoftDelete return types to `(string, error)` |
+| `services/shortener/internal/repository/postgres/link_repo.go` | use `RETURNING short_code` in UPDATEs |
+| `services/shortener/internal/service/link_service.go` | call `cache.Delete` after each mutation, swallow errors |
+| `services/shortener/internal/service/link_service_test.go` | extend mocks; add 6 new test cases (3 happy + 3 cache-error) |
 
 ## Progress Checklist
 

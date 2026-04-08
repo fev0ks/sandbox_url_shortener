@@ -14,7 +14,7 @@ Purpose:
 
 Start from:
 - `AGENTS.md`
-- `docs/skills.md`
+- `ai/skills.md`
 - `go.mod`
 - the current entrypoint and relevant code
 
