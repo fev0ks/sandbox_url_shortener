@@ -3,12 +3,12 @@ COMPOSE_FILE := deploy/docker-compose/docker-compose.yml
 .PHONY: build test lint run stop migrate-up migrate-down migrate-create migrate-version
 
 DB_DSN ?= postgres://shortener:shortener@localhost:5432/shortener?sslmode=disable
-MIGRATE_PATH := migrations/postgres
+MIGRATE_PATH := services/shortener/migrations/postgres
 
 ## build: compile both binaries locally
 build:
-	go build ./cmd/api-http-stdlib
-	go build ./cmd/worker
+	go build ./services/shortener/cmd/shortener
+	go build ./services/analytics/cmd/analytics
 
 ## test: run all tests
 test:

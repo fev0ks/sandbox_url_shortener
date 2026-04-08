@@ -25,10 +25,10 @@ services:
       timeout: 3s
       retries: 5
 
-  api:
+  shortener:
     build:
       context: ../..
-      dockerfile: deploy/docker-compose/Dockerfile.api
+      dockerfile: services/shortener/Dockerfile
     ports:
       - "8080:8080"
     env_file:
@@ -44,16 +44,16 @@ services:
       timeout: 3s
       retries: 5
 
-  worker:
+  analytics:
     build:
       context: ../..
-      dockerfile: deploy/docker-compose/Dockerfile.worker
+      dockerfile: services/analytics/Dockerfile
     ports:
       - "9090:9090"
     env_file:
       - ../../.env
     environment:
-      DB_DSN: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
+      ANALYTICS_ADMIN_PORT: "9090"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/health/live"]
       interval: 5s
@@ -63,7 +63,7 @@ services:
   migrate:
     image: migrate/migrate:v4.18.3
     volumes:
-      - ../../migrations/postgres:/migrations
+      - ../../services/shortener/migrations/postgres:/migrations
     command:
       - "-path=/migrations"
       - "-database=postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable"

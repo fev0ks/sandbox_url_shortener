@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-)
 
-type requestIDKey struct{}
+	"sandbox_url_shortener/internal/platform/requestmeta"
+)
 
 const headerRequestID = "X-Request-ID"
 
@@ -23,17 +23,23 @@ func RequestID(next http.Handler) http.Handler {
 
 		w.Header().Set(headerRequestID, id)
 
-		ctx := context.WithValue(r.Context(), requestIDKey{}, id)
+		ctx := requestmeta.WithRequestID(r.Context(), id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // GetRequestID extracts the request ID from context.
 func GetRequestID(ctx context.Context) string {
-	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
-		return id
-	}
-	return ""
+	return requestmeta.RequestID(ctx)
+}
+
+func withCorrelationID(ctx context.Context, id string) context.Context {
+	return requestmeta.WithCorrelationID(ctx, id)
+}
+
+// GetCorrelationID extracts the correlation ID from context.
+func GetCorrelationID(ctx context.Context) string {
+	return requestmeta.CorrelationID(ctx)
 }
 
 func generateID() string {

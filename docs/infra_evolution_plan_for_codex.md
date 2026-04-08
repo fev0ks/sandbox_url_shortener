@@ -69,11 +69,11 @@ Docker Compose особенно хорошо подходит, пока прое
 - `clickhouse`, если аналитика уже включена
 - `elasticsearch` и `kibana`, если observability уже дошла до этого уровня
 - `prometheus` и `grafana`
-- опционально сам `api-http-stdlib` и `worker`
+- опционально сами `shortener` и `analytics`
 
 При этом допустим гибридный режим:
 - инфраструктура в Compose;
-- `api-http-stdlib` и `worker` запускаются локально из IDE.
+- `shortener` и `analytics` запускаются локально из IDE.
 
 Это особенно удобно на ранней стадии разработки.
 
@@ -155,8 +155,8 @@ Helm должен стать:
 ## Что должно входить в Helm chart
 
 Минимально chart должен покрывать:
-- `api-http-stdlib`
-- `worker`
+- `shortener`
+- `analytics`
 - ingress/service
 - env/config
 - probes

@@ -52,8 +52,8 @@
 - Не стартовать с микросервисной архитектуры.
 - Начать с **модульного монолита**.
 - Выделить два исполняемых приложения:
-  - `api-http-stdlib`
-  - `worker`
+  - `shortener`
+  - `analytics`
 - Альтернативные HTTP entrypoint-ы вроде `api-http-chi` и `api-http-gin` допустимы позже как
   отдельный exploratory track, но не в базовом MVP.
 - Держать четкое разделение слоев:
@@ -113,7 +113,7 @@
 
 - **shortener-service** — основной user-facing сервис: HTTP API, redirect handler, UI endpoints,
   health/metrics
-- **worker** — Kafka consumer для обработки событий и записи аналитики
+- **analytics** — Kafka consumer для обработки событий и записи аналитики
 - **PostgreSQL** — источник истины для ссылок и служебных сущностей
 - **Redis** — кеш, rate limiting, idempotency
 - **Kafka** — транспорт событий
@@ -135,7 +135,7 @@ UI/API → shortener-service → PostgreSQL → Redis warm-up → response
 client → shortener-service → Redis → PostgreSQL fallback → HTTP redirect → Kafka event best effort
 
 #### Analytics
-Kafka → worker → ClickHouse
+Kafka → analytics → ClickHouse
 
 #### Logs
 applications → log shipper → Elasticsearch → Kibana
@@ -147,7 +147,7 @@ applications → `/metrics` → Prometheus → Grafana
 k6 → shortener-service → Prometheus/Grafana dashboards + PostgreSQL/Redis observability
 
 #### Local Kubernetes deploy
-local automation → Helm → kind → shortener-service/worker
+local automation → Helm → kind → shortener-service/analytics
 
 ---
 
@@ -155,36 +155,39 @@ local automation → Helm → kind → shortener-service/worker
 
 ```text
 shortener/
-├── cmd/
-│   ├── api-http-stdlib/
-│   └── worker/
+├── services/
+│   ├── shortener/
+│   │   ├── cmd/
+│   │   │   └── shortener/
+│   │   ├── Dockerfile
+│   │   ├── migrations/
+│   │   │   └── postgres/
+│   │   └── internal/
+│   │       ├── app/
+│   │       ├── config/
+│   │       ├── domain/
+│   │       ├── repository/
+│   │       ├── service/
+│   │       ├── shortcode/
+│   │       └── transport/
+│   └── analytics/
+│       ├── cmd/
+│       │   └── analytics/
+│       ├── Dockerfile
+│       ├── migrations/
+│       └── internal/
+│           ├── app/
+│           └── config/
 ├── internal/
-│   ├── app/
-│   ├── config/
-│   ├── domain/
-│   │   ├── link/
-│   │   ├── redirect/
-│   │   ├── analytics/
-│   │   └── user/
-│   ├── service/
-│   ├── repository/
-│   │   ├── postgres/
-│   │   ├── redis/
-│   │   ├── clickhouse/
-│   │   └── kafka/
-│   ├── transport/
-│   │   └── http/
-│   │       └── stdlib/
-│   ├── platform/
+│   └── platform/
+│   │   ├── health/
 │   │   ├── logger/
 │   │   ├── metrics/
 │   │   └── middleware/
-│   └── ui/
 ├── web/
 │   ├── templates/
 │   ├── static/
 │   └── assets/
-├── migrations/
 ├── deploy/
 │   ├── docker-compose/
 │   ├── helm/
@@ -230,7 +233,7 @@ shortener/
 - `ip`
 - `user_agent`
 - `referer`
-- `country` — не присутствует в Kafka-событии `link.visited`; добавляется worker-ом через GeoIP-обогащение перед записью в ClickHouse. Включение GeoIP в MVP — открытый вопрос (см. E06).
+- `country` — не присутствует в Kafka-событии `link.visited`; добавляется analytics-процессом через GeoIP-обогащение перед записью в ClickHouse. Включение GeoIP в MVP — открытый вопрос (см. E06).
 - `request_id`
 
 ### 8.3. User
@@ -351,12 +354,12 @@ Redirect не должен зависеть от успешной синхрон
 #### Что сделать
 - инициализировать проект на Go 1.25
 - подготовить структуру каталогов
-- завести базовый entrypoint `cmd/api-http-stdlib`
+- завести базовый entrypoint `services/shortener/cmd/shortener`
 - добавить config loader
 - добавить structured logger
 - добавить middlewares
 - добавить graceful shutdown
-- поднять `api-http-stdlib + PostgreSQL + Redis` в docker-compose
+- поднять `shortener + PostgreSQL + Redis` в docker-compose
 - добавить `/health/live`, `/health/ready`, `/metrics`
 
 #### Результат
@@ -412,8 +415,8 @@ Hot path ускорен, PostgreSQL разгружен.
 #### Что сделать
 - поднять Kafka в docker-compose
 - определить schema события `link.visited`
-- добавить producer в `api-http-stdlib`
-- добавить worker consumer
+- добавить producer в `shortener`
+- добавить analytics consumer
 - продумать retry и DLQ
 
 #### Результат
@@ -426,7 +429,7 @@ Hot path ускорен, PostgreSQL разгружен.
 #### Что сделать
 - поднять ClickHouse
 - создать таблицу raw click events
-- писать события из worker в ClickHouse
+- писать события из analytics в ClickHouse
 - добавить API для базовой статистики
 
 #### Результат
@@ -499,7 +502,7 @@ Hot path ускорен, PostgreSQL разгружен.
 
 #### Что сделать
 - поднять локальный `kind`-кластер
-- подготовить Helm chart для `api-http-stdlib` и `worker`
+- подготовить Helm chart для `shortener` и `analytics`
 - настроить ingress/service/probes/config для локального k8s-окружения
 - описать локальную процедуру `helm upgrade --install`
 - проверить rollout и recovery в локальной Kubernetes-модели
@@ -558,7 +561,7 @@ Hot path ускорен, PostgreSQL разгружен.
 Требования:
 - схема должна быть версионируемой
 - redirect path не должен ждать аналитические consumers
-- worker должен быть готов к at-least-once processing
+- analytics должен быть готов к at-least-once processing
 - стоит предусмотреть DLQ
 
 ---
@@ -627,7 +630,7 @@ Hot path ускорен, PostgreSQL разгружен.
 
 Архитектурные требования:
 - начать как модульный монолит
-- выделить два приложения: api-http-stdlib и worker
+- выделить два приложения: shortener и analytics
 - использовать Go 1.25
 - придерживаться чистого разделения handler / service / repository
 - structured JSON logging

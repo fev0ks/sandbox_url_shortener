@@ -22,7 +22,7 @@ Detailed defaults for data stores, migrations, and logging live in
 This design covers the MVP and the planned production-like stack:
 
 - `shortener-service` as the main user-facing service
-- `worker` service
+- `analytics` service
 - `k6` load generator for controlled performance testing
 - PostgreSQL
 - Redis
@@ -42,7 +42,7 @@ cloud or VPS environment in the baseline roadmap.
 Service naming and binary naming are intentionally separate:
 
 - service role: `shortener-service`
-- current baseline binary: `cmd/api-http-stdlib`
+- current baseline binary: `services/shortener/cmd/shortener`
 
 ## System Context
 
@@ -55,8 +55,8 @@ flowchart LR
         cli["Make / Local Automation"]
 
         subgraph compose["Docker Compose Runtime (default early stage)"]
-            shortener["shortener-service (api-http-stdlib)"]
-            worker["worker"]
+            shortener["shortener-service (shortener)"]
+            analytics["analytics"]
             pg["PostgreSQL"]
             redis["Redis"]
             kafka["Kafka"]
@@ -78,14 +78,14 @@ flowchart LR
     shortener --> pg
     shortener --> redis
     shortener --> kafka
-    kafka --> worker
-    worker --> ch
+    kafka --> analytics
+    analytics --> ch
     shortener --> shipper
-    worker --> shipper
+    analytics --> shipper
     shipper --> es
     es --> kibana
     prom --> shortener
-    prom --> worker
+    prom --> analytics
     k6 --> prom
     prom --> grafana
 ```
@@ -110,7 +110,7 @@ flowchart LR
         helm["Helm Release"]
         ingress["Ingress / Service"]
         k8s_shortener["shortener-service Deployment"]
-        k8s_worker["worker Deployment"]
+        k8s_analytics["analytics Deployment"]
     end
 
     subgraph deps["Shared Local Dependencies"]
@@ -125,7 +125,7 @@ flowchart LR
 
     cli --> helm
     helm --> k8s_shortener
-    helm --> k8s_worker
+    helm --> k8s_analytics
     user --> ingress
     ingress --> k8s_shortener
 
@@ -133,16 +133,16 @@ flowchart LR
     k8s_shortener --> redis
     k8s_shortener --> kafka
     k8s_shortener -.->|stats reads| ch
-    kafka --> k8s_worker
-    k8s_worker --> ch
+    kafka --> k8s_analytics
+    k8s_analytics --> ch
     k8s_shortener --> shipper
-    k8s_worker --> shipper
+    k8s_analytics --> shipper
     shipper --> es
     es --> kibana
     operator --> grafana
     operator --> kibana
     prom --> k8s_shortener
-    prom --> k8s_worker
+    prom --> k8s_analytics
     prom --> grafana
 ```
 
@@ -151,8 +151,8 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph app["Application Layer"]
-        shortener["shortener-service (`cmd/api-http-stdlib`)"]
-        worker["cmd/worker"]
+        shortener["shortener-service (`services/shortener/cmd/shortener`)"]
+        analytics["services/analytics/cmd/analytics"]
     end
 
     subgraph state["State And Messaging"]
@@ -175,16 +175,16 @@ flowchart TB
     shortener --> redis
     shortener --> kafka
     shortener -.->|stats reads| ch
-    kafka --> worker
-    worker --> ch
+    kafka --> analytics
+    analytics --> ch
 
     prom --> shortener
-    prom --> worker
+    prom --> analytics
     k6 --> prom
     prom --> grafana
 
     shortener --> shipper
-    worker --> shipper
+    analytics --> shipper
     shipper --> es
     es --> kibana
 ```
@@ -194,7 +194,8 @@ flowchart TB
 ### `shortener-service`
 
 The main user-facing service is `shortener-service`. Its current baseline binary is
-`cmd/api-http-stdlib`, and it is implemented as a modular monolith with explicit layers:
+`services/shortener/cmd/shortener`, and it is implemented as a modular monolith with explicit
+layers:
 
 - transport: HTTP router, handlers, middleware, UI handlers
 - service: link lifecycle, redirect orchestration, stats read model
@@ -213,30 +214,30 @@ Constraints:
 - future alternative HTTP runtimes such as `api-http-chi` or `api-http-gin` may reuse the same
   service and repository layers, but they are not part of the MVP baseline
 
-### `worker`
+### `analytics`
 
-The `worker` binary is intentionally narrow:
+The `analytics` binary is intentionally narrow:
 
 - consume Kafka messages
 - validate and deserialize event payloads
 - write analytics events to ClickHouse
 - emit logs and metrics for consumer health
 
-The worker must tolerate at-least-once delivery and avoid making redirect success depend on any of
+The analytics service must tolerate at-least-once delivery and avoid making redirect success depend on any of
 its behavior.
 
-Although `worker` is not user-facing, it exposes a lightweight HTTP server for health and metrics:
+Although `analytics` is not user-facing, it exposes a lightweight HTTP server for health and metrics:
 
 - `/health/live` and `/health/ready` for Docker and Kubernetes probes
 - `/metrics` for Prometheus scraping
 
 ### Metrics And Health Port Strategy
 
-Both `shortener-service` and `worker` expose `/health/live`, `/health/ready`, and `/metrics` over
+Both `shortener-service` and `analytics` expose `/health/live`, `/health/ready`, and `/metrics` over
 HTTP. The port layout:
 
 - `shortener-service`: single port for API, UI, health, and metrics (default `8080`)
-- `worker`: dedicated admin port for health and metrics only (default `9090`)
+- `analytics`: dedicated admin port for health and metrics only (default `9090`)
 
 In Docker Compose, health checks use the `/health/live` endpoint. In Kubernetes, liveness and
 readiness probes target the same endpoints via `httpGet`.
@@ -398,7 +399,7 @@ sequenceDiagram
 Outcome:
 
 - analytics are asynchronous
-- worker handles retries or DLQ strategy outside the user request path
+- analytics handles retries or DLQ strategy outside the user request path
 
 ### Stats Read
 
@@ -427,7 +428,7 @@ Outcome:
 
 - applications emit structured JSON logs
 - logs are shipped to Elasticsearch and explored in Kibana
-- `shortener-service` and `worker` expose `/metrics`
+- `shortener-service` and `analytics` expose `/metrics`
 - Prometheus scrapes metrics and Grafana visualizes them
 
 ### Load And Stress Testing
@@ -441,7 +442,7 @@ Outcome:
 ## Key Design Decisions
 
 - start as one codebase with two binaries, not multiple services
-- use `cmd/api-http-stdlib` as the canonical binary for `shortener-service` in the MVP
+- use `services/shortener/cmd/shortener` as the canonical binary for `shortener-service` in the MVP
 - keep redirect resolution `Redis -> PostgreSQL -> Redis warm-up`
 - use PostgreSQL UUIDv7 ids plus separate random base58 short codes with length `7`
 - return `302 Found` in the first redirect implementation
@@ -477,7 +478,7 @@ without a JSON body, since the client is typically a browser following a link.
 ## Reliability Expectations
 
 - health endpoints distinguish liveness and readiness
-- graceful shutdown is required for both `api` and `worker`
+- graceful shutdown is required for both `shortener` and `analytics`
 - Kafka publish failures are non-blocking for redirects
 - cache failures degrade to PostgreSQL reads
 - analytics pipeline is eventually consistent
@@ -506,7 +507,7 @@ sequence follows the roadmap in `docs/url_shortener_codex_plan.md` section 17:
 - `E02` Core Link Lifecycle: link CRUD and redirect source of truth
 - `E03` Redirect Performance And Safety: Redis hot path and write protection
 - `E04` Browser UI: usable web interface
-- `E05` Event Pipeline: Kafka producer and worker
+- `E05` Event Pipeline: Kafka producer and analytics
 - `E06` Analytics And Stats: ClickHouse ingestion and queries
 - `E07` Log Observability: Elasticsearch and Kibana
 - `E08` Metrics And Dashboards: Prometheus and Grafana

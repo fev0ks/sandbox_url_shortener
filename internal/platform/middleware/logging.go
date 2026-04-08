@@ -4,9 +4,15 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
-
-	"sandbox_url_shortener/internal/platform/logger"
 )
+
+// defaultLogSkipPaths are noisy infra endpoints we don't want in access logs.
+// Probes and scrapers hit them every few seconds and drown out real traffic.
+var defaultLogSkipPaths = map[string]struct{}{
+	"/health/live":  {},
+	"/health/ready": {},
+	"/metrics":      {},
+}
 
 // statusWriter wraps http.ResponseWriter to capture the status code.
 type statusWriter struct {
@@ -19,25 +25,31 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// Logging attaches a request-scoped logger to context and logs one summary line per request.
+// Logging emits one structured line per request, skipping infra paths
+// (health probes, /metrics) so access logs stay readable.
+//
+// Errors and 5xx responses on skipped paths are still logged so failing
+// probes are visible.
 func Logging(base *slog.Logger) func(http.Handler) http.Handler {
+	return LoggingWithSkip(base, defaultLogSkipPaths)
+}
+
+// LoggingWithSkip is like Logging but lets the caller override the skip set.
+// Pass nil to log every request.
+func LoggingWithSkip(base *slog.Logger, skip map[string]struct{}) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-
-			requestID := GetRequestID(r.Context())
-
-			reqLogger := base.With(
-				slog.String("request_id", requestID),
-			)
-
-			ctx := logger.WithContext(r.Context(), reqLogger)
-			r = r.WithContext(ctx)
+			ctx := r.Context()
 
 			sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
 			next.ServeHTTP(sw, r)
 
-			reqLogger.InfoContext(ctx, "request",
+			if _, skipped := skip[r.URL.Path]; skipped && sw.code < 500 {
+				return
+			}
+
+			base.InfoContext(ctx, "request",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status_code", sw.code),

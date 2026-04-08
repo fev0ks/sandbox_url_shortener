@@ -26,11 +26,13 @@ migrate -version
 
 ## Directory Structure
 
-```
-migrations/
-  postgres/
-    000001_create_links_table.up.sql
-    000001_create_links_table.down.sql
+```text
+services/
+  shortener/
+    migrations/
+      postgres/
+        000001_create_links_table.up.sql
+        000001_create_links_table.down.sql
 ```
 
 Each schema change is a pair of files:
@@ -59,7 +61,7 @@ make migrate-up
 This runs:
 
 ```bash
-migrate -path migrations/postgres \
+migrate -path services/shortener/migrations/postgres \
         -database "postgres://shortener:shortener@localhost:5432/shortener?sslmode=disable" \
         up
 ```
@@ -84,7 +86,7 @@ make migrate-down
 This runs:
 
 ```bash
-migrate -path migrations/postgres \
+migrate -path services/shortener/migrations/postgres \
         -database "postgres://shortener:shortener@localhost:5432/shortener?sslmode=disable" \
         down 1
 ```
@@ -94,7 +96,7 @@ The `1` means "revert one migration". Omit it to revert all (dangerous in produc
 ### Migrating To A Specific Version
 
 ```bash
-migrate -path migrations/postgres \
+migrate -path services/shortener/migrations/postgres \
         -database "$DB_DSN" \
         goto <version>
 ```
@@ -104,7 +106,7 @@ Where `<version>` is the numeric prefix (e.g. `1` for `000001`).
 ### Checking Current Version
 
 ```bash
-migrate -path migrations/postgres \
+migrate -path services/shortener/migrations/postgres \
         -database "$DB_DSN" \
         version
 ```
@@ -112,20 +114,20 @@ migrate -path migrations/postgres \
 ## Creating A New Migration
 
 ```bash
-migrate create -ext sql -dir migrations/postgres -seq <description>
+migrate create -ext sql -dir services/shortener/migrations/postgres -seq <description>
 ```
 
 Example:
 
 ```bash
-migrate create -ext sql -dir migrations/postgres -seq add_user_table
+migrate create -ext sql -dir services/shortener/migrations/postgres -seq add_user_table
 ```
 
 This generates:
 
 ```
-migrations/postgres/000002_add_user_table.up.sql
-migrations/postgres/000002_add_user_table.down.sql
+services/shortener/migrations/postgres/000002_add_user_table.up.sql
+services/shortener/migrations/postgres/000002_add_user_table.down.sql
 ```
 
 Edit both files before applying.
@@ -144,7 +146,7 @@ To recover:
 2. Force the version to the last known good state:
 
 ```bash
-migrate -path migrations/postgres \
+migrate -path services/shortener/migrations/postgres \
         -database "$DB_DSN" \
         force <last_good_version>
 ```

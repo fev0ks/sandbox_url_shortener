@@ -11,7 +11,7 @@ default implementation direction unless a later task explicitly changes it.
 - PostgreSQL is the only source of truth for link state
 - Redis is a cache and control-plane store, not a durable system of record
 - ClickHouse stores analytics events only
-- SQL migrations use `golang-migrate` and live in `migrations/postgres`
+- SQL migrations use `golang-migrate` and live in `services/shortener/migrations/postgres`
 - application logs use Go `log/slog` with JSON output to `stdout`
 - log shipping uses `Fluent Bit -> Elasticsearch -> Kibana`
 - request correlation is mandatory through `request_id`
@@ -88,14 +88,14 @@ Cache and max_clicks interaction:
 
 Use ClickHouse only for append-heavy analytics data:
 
-- raw click events written by the `worker`
+- raw click events written by the `analytics` service
 - aggregated stats queries for API and UI
 
 ClickHouse rules:
 
 - the user request path never writes directly to ClickHouse
 - store raw events first, optimize with materialized views only if needed later
-- worker writes must be idempotency-aware enough for at-least-once delivery
+- analytics writes must be idempotency-aware enough for at-least-once delivery
 
 Initial table direction:
 
@@ -262,8 +262,8 @@ Rules:
 
 Repository layout:
 
-- `migrations/postgres`
-- future analytics DDL may live under `migrations/clickhouse` if needed
+- `services/shortener/migrations/postgres`
+- future analytics DDL may live under `services/analytics/migrations/clickhouse` if needed
 - ClickHouse DDL management approach (manual SQL scripts, golang-migrate, or another tool) should be
   decided when E06 work begins; until then, initial table creation can be handled by a setup script
 
@@ -302,7 +302,7 @@ Why:
 
 Chosen pipeline:
 
-`api/worker stdout -> Fluent Bit -> Elasticsearch -> Kibana`
+`shortener/analytics stdout -> Fluent Bit -> Elasticsearch -> Kibana`
 
 Why Fluent Bit:
 
@@ -353,9 +353,9 @@ Domain or business logs should include when relevant:
 - otherwise middleware generates a request id
 - the request id is returned in the response headers
 - redirect-published Kafka events include the same `request_id`
-- worker logs copy `request_id` from the event payload when available
+- analytics logs copy `request_id` from the event payload when available
 
-This gives one correlation key across HTTP, Kafka, worker, and Kibana searches.
+This gives one correlation key across HTTP, Kafka, analytics, and Kibana searches.
 
 ### Log Level Rules
 
@@ -395,7 +395,7 @@ Kibana queries should support:
 - finding one request by `request_id`
 - finding all redirect failures for one `short_code`
 - finding Kafka publish degradation by `operation=publish_click_event`
-- finding worker insert failures by `event_id`
+- finding analytics insert failures by `event_id`
 
 This is why `request_id`, `short_code`, `status_code`, `operation`, and `error_kind` are mandatory
 design fields, not optional nice-to-haves.

@@ -64,11 +64,11 @@ tasks:
       - go test ./... -v
 
   build:
-    desc: "Build API and worker binaries"
+    desc: "Build shortener and analytics binaries"
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -o {{.BIN_DIR}}/api-http-stdlib ./cmd/api-http-stdlib
-      - go build -o {{.BIN_DIR}}/worker ./cmd/worker
+      - go build -o {{.BIN_DIR}}/shortener ./services/shortener/cmd/shortener
+      - go build -o {{.BIN_DIR}}/analytics ./services/analytics/cmd/analytics
 
   verify:
     desc: "Run lint, tests, and builds"
