@@ -1,6 +1,6 @@
 # E03-003 - Add Create Endpoint Rate Limiting
 
-Status: backlog
+Status: complete
 
 Epic: E03 - Redirect Performance And Safety
 
@@ -29,8 +29,8 @@ is down so legitimate creates don't break during a Redis outage.
   default
 - client IP is extracted via `X-Forwarded-For` first segment if present, else `RemoteAddr`
 - Redis errors result in fail-open behavior: request is allowed, warning logged
-- the limiter is implemented as HTTP middleware applied only to the create route, not the whole
-  mux
+- the limiter is implemented as create-route middleware logic applied only to fresh
+  `POST /api/v1/links` requests, not the whole mux
 - unit tests cover: under-limit, at-limit, over-limit, Redis-error fail-open
 - `go build`, `go vet`, `go test ./...` all pass
 
@@ -62,23 +62,38 @@ collected by the EXPIRE.
 ### Middleware
 
 ```go
-// internal/platform/middleware/ratelimit.go
+// internal/platform/httppolicy/ratelimit.go
 func RateLimitCreate(cache RateLimiter, limit int, log *slog.Logger) func(http.Handler) http.Handler
 ```
 
-`RateLimiter` is a small interface (just `Incr` + `Expire`) defined in middleware so the
-middleware doesn't depend on the Redis package directly. The Redis cache from E03-001 can
-implement it, or a separate small struct can wrap the client.
+`RateLimiter` is a small interface defined in route-policy code so the HTTP layer doesn't
+depend on the Redis package directly. The limiter instance itself stays generic; route-level
+policy supplies a key builder (for example client IP under the `ratelimit:create` namespace)
+before calling `Allow(...)`.
 
 ### Wiring
 
-In `initHTTPServer`, only the create route gets the wrapped handler:
+Routing now lives in `services/shortener/internal/app/router.go` and feature handlers
+self-register via `link.Handler.Register(mux)`. Two viable wiring options:
+
+**Option A — per-route limiter inside the link package** (preferred): inject a
+concrete create-rate-limit dependency into `link.Handler`, and apply it only to
+the fresh create execution path after idempotency replay/conflict checks:
 
 ```go
-mux.Handle("POST /api/v1/links",
-    middleware.RateLimitCreate(a.di.rateLimiter, a.cfg.RateLimitCreatePerMin, a.log)(
-        http.HandlerFunc(a.di.linkHandler.Create)))
+// link/handler.go
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+    if replayedFromIdempotencyCache(r) {
+        // return cached 201 / 409 without spending abuse budget
+        return
+    }
+    h.serveFreshCreate(w, r) // applies limiter only here
+}
 ```
+
+**Option B — wire in router.go** by registering the create route manually before
+calling `Register` for the rest. Less clean because it splits one feature's routes
+across two files; pick A.
 
 Other routes are unchanged.
 
@@ -98,23 +113,24 @@ Reuse the existing `respond.Error` helper with code `rate_limited`, status `429`
 | File | Change |
 |------|--------|
 | `services/shortener/internal/config/config.go` | add `RateLimitCreatePerMin` |
-| `internal/platform/middleware/ratelimit.go` | new — rate-limit middleware + RateLimiter interface |
-| `internal/platform/middleware/ratelimit_test.go` | new — under/at/over/fail-open tests |
+| `internal/platform/httppolicy/ratelimit.go` | new — rate-limit route policy + Limiter interface |
+| `internal/platform/httppolicy/ratelimit_test.go` | new — under/at/over/fail-open tests |
 | `services/shortener/internal/app/di.go` | add `rateLimiter` field if not reusing the cache |
-| `services/shortener/internal/app/app.go` | wrap create route with the limiter middleware |
+| `services/shortener/internal/transport/http/stdlib/link/handler.go` | accept optional limiter middleware, wrap only the create route in `Register` |
+| `services/shortener/internal/app/di.go` | construct `link.NewHandler` with the limiter middleware |
 | `.env` | add `RATE_LIMIT_CREATE_PER_MIN=10` |
 
 ## Progress Checklist
 
-- [ ] confirm scope and assumptions
-- [ ] add config field with default
-- [ ] design `RateLimiter` interface and Redis implementation
-- [ ] implement `RateLimitCreate` middleware with fail-open
-- [ ] add unit tests with mock RateLimiter (under/at/over/error)
-- [ ] wrap only `POST /api/v1/links` in `initHTTPServer`
-- [ ] manual smoke test against running stack
-- [ ] run `go test ./...`, `go build ./...`, `go vet ./...`
-- [ ] pass review or resolve review findings
+- [x] confirm scope and assumptions
+- [x] add config field with default
+- [x] design `RateLimiter` interface and Redis implementation
+- [x] implement `RateLimitCreate` middleware with fail-open
+- [x] add unit tests with mock RateLimiter (under/at/over/error)
+- [x] wrap only `POST /api/v1/links` inside `link.Handler.Register`
+- [x] manual smoke test against running stack
+- [x] run `go test ./...`, `go build ./...`, `go vet ./...`
+- [x] pass review or resolve review findings
 
 ## Validation
 
@@ -127,7 +143,15 @@ Reuse the existing `respond.Error` helper with code `rate_limited`, status `429`
 
 ## Review Notes
 
-- pending
+- implementation updated after review: idempotent replays now bypass rate-limit enforcement,
+  while fresh creates still go through the same limiter wired through `link.Handler`
+- `go build ./...`, `go vet ./...`, `go test ./...` all pass
+- limiter stays as reusable platform HTTP policy; `link.Handler` owns the create-route assembly
+  and applies the injected create-rate-limit only to fresh create attempts. The Redis limiter
+  instance is now generic and route policy supplies a client-IP key builder under the
+  `ratelimit:create` namespace. Backend lives in `repository/redis/fixed_window_limiter.go`
+- ratelimit_test.go covers under-limit, over-limit (with Retry-After), fail-open, and
+  X-Forwarded-For/RemoteAddr extraction; handler tests cover replay bypassing the limiter
 
 ## Review Findings
 
@@ -137,7 +161,9 @@ Reuse the existing `respond.Error` helper with code `rate_limited`, status `429`
 
 ### P1 High
 
-- [x] no open P1 findings
+- [x] Idempotency replay/conflict handling now runs before the fresh-create rate-limit path, so
+  duplicate requests with the same `Idempotency-Key` replay cached responses without spending
+  abuse budget or being throttled with `429`.
 
 ### P2 Medium
 

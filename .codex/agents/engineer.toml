@@ -31,8 +31,10 @@ Rules:
 - run the smallest meaningful validation after changes
 - if behavior or architecture changes materially, update `AGENTS.md` or `ai/skills.md` in the
   same task
-- after creating or modifying repo files for the current task, stage those relevant files with
-  `git add` before final handoff
+- after creating, renaming, deleting, or modifying repo files for the current task, stage all
+  those relevant paths before final handoff
+- prefer `git add -A <path>...` when the task includes new files, deletions, or renames so the
+  index matches the working tree for the current task
 - do not stage unrelated files or pre-existing user changes outside the current task
 
 After finishing, summarize:

@@ -1,21 +1,22 @@
 # E03-001 - Add Redis Cache-Aside To Redirect Flow
 
-Status: backlog
+Status: complete
 
 Epic: E03 - Redirect Performance And Safety
 
 ## Summary
 
 Introduce a Redis cache-aside layer in front of the redirect lookup. On cache hit serve the
-redirect without touching PostgreSQL (when `max_clicks = 0`); on miss fall back to PostgreSQL,
-warm the cache, and serve. Cache failures must degrade gracefully — Redis being down should
-not break redirects.
+redirect from cached data while still updating the authoritative PostgreSQL redirect counter
+for unlimited links (`max_clicks = 0`); on miss fall back to PostgreSQL, warm the cache, and
+serve. Cache failures must degrade gracefully — Redis being down should not break redirects.
 
 ## Scope
 
-- new Redis client wired through the App composition root with health probe
+- new Redis client wired through the App composition root; boot connectivity is required, but
+  readiness stays PostgreSQL-only because Redis is treated as a fail-open dependency
 - new `LinkCache` interface in `services/shortener/internal/domain/` and Redis implementation
-  under `internal/repository/redis/`
+  under `services/shortener/internal/repository/redis/`
 - update `LinkService.Resolve` to consult the cache before calling the repository
 - cache-warm-up after a PostgreSQL miss in the resolve path
 - preserve `max_clicks` semantics: links with `max_clicks > 0` always confirm against
@@ -27,11 +28,12 @@ not break redirects.
 
 - Redis client is created in `initContainer` with `REDIS_ADDR` config; failure to connect at
   boot returns an error from `NewApp`
-- redirect happy path on cache hit returns 302 without a PostgreSQL query when `max_clicks = 0`
+- redirect happy path on cache hit returns 302 without a PostgreSQL read query when
+  `max_clicks = 0`, while still keeping `redirect_count` authoritative in PostgreSQL
 - redirect on cache miss falls back to PostgreSQL, populates the cache, and returns 302
 - redirect when Redis is down logs a warning once per request and falls back to PostgreSQL
   successfully
-- cached value includes `original_url`, `max_clicks`, `redirect_count`, and `expires_at`
+- cached value includes `original_url`, `max_clicks`, and `expires_at`
 - cache key format is `link:code:{short_code}`
 - TTL is `min(24h, time_until_expires_at)`; if `expires_at` is nil the TTL is 24h
 - `LinkCache` interface lives in `services/shortener/internal/domain/`; the service depends on the
@@ -47,14 +49,13 @@ not break redirects.
 - the project does not need cluster mode or sentinel — single-node Redis is enough
 - `redis/go-redis/v9` is the chosen client library
 - cache failures should never propagate as 5xx — they degrade to a slower-but-correct PG path
-- the cached `redirect_count` for `max_clicks > 0` links is a hint and is refreshed after the
-  authoritative PG increment
+- `redirect_count` remains authoritative in PostgreSQL; the cache does not store it
 
 ## Implementation Notes
 
 - add `REDIS_ADDR` (default `localhost:6379`) and `REDIS_DB` (default `0`) to
   `services/shortener/internal/config`
-- new file `internal/repository/redis/link_cache.go` implementing `domain.LinkCache`:
+- new file `services/shortener/internal/repository/redis/link_cache.go` implementing `domain.LinkCache`:
 
   ```go
   type LinkCache interface {
@@ -64,16 +65,17 @@ not break redirects.
   }
 
   type CachedLink struct {
-      OriginalURL   string
-      MaxClicks     int64
-      RedirectCount int64
-      ExpiresAt     *time.Time
+      OriginalURL string
+      MaxClicks   int64
+      ExpiresAt   *time.Time
   }
   ```
 
 - service algorithm in `Resolve`:
   1. Try `cache.Get(shortCode)`. On error: log warn, treat as miss.
-  2. If hit and `MaxClicks == 0` and not expired → return synthesized `domain.Link`.
+  2. If hit and `MaxClicks == 0` and not expired → call lightweight
+     `repo.TouchRedirect(shortCode)` to keep PostgreSQL authoritative, then return synthesized
+     `domain.Link`.
   3. Otherwise call `repo.ResolveAndIncrement` (existing path).
   4. On PG success: best-effort `cache.Set` with computed TTL. Failures swallowed and logged.
 - TTL helper: `func computeTTL(expiresAt *time.Time, now time.Time) time.Duration` returning
@@ -91,7 +93,7 @@ not break redirects.
 |------|--------|
 | `services/shortener/internal/config/config.go` | add `RedisAddr`, `RedisDB` |
 | `services/shortener/internal/domain/link_cache.go` | new — LinkCache interface + CachedLink struct |
-| `internal/repository/redis/link_cache.go` | new — Redis implementation |
+| `services/shortener/internal/repository/redis/link_cache.go` | new — Redis implementation |
 | `services/shortener/internal/service/link_service.go` | extend `Resolve` with cache path; constructor takes cache |
 | `services/shortener/internal/service/link_service_test.go` | add mockLinkCache + 3 cache scenarios |
 | `services/shortener/internal/app/app.go` | add `initRedis`, register closer, pass redis to container |
@@ -101,16 +103,16 @@ not break redirects.
 
 ## Progress Checklist
 
-- [ ] confirm scope and assumptions
-- [ ] add `redis/go-redis/v9` dependency
-- [ ] add Redis config fields
-- [ ] create `LinkCache` interface in domain
-- [ ] implement Redis cache repository
-- [ ] extend `LinkService.Resolve` with cache path + graceful degradation
-- [ ] wire Redis client and cache through `App` and `container`
-- [ ] add service unit tests for hit / miss / cache-error
-- [ ] run `go test ./...`, `go build ./...`, `go vet ./...`
-- [ ] pass review or resolve review findings
+- [x] confirm scope and assumptions
+- [x] add `redis/go-redis/v9` dependency
+- [x] add Redis config fields
+- [x] create `LinkCache` interface in domain
+- [x] implement Redis cache repository
+- [x] extend `LinkService.Resolve` with cache path + graceful degradation
+- [x] wire Redis client and cache through `App` and `container`
+- [x] add service unit tests for hit / miss / cache-error
+- [x] run `go test ./...`, `go build ./...`, `go vet ./...`
+- [x] pass review or resolve review findings
 
 ## Validation
 
@@ -123,7 +125,11 @@ not break redirects.
 
 ## Review Notes
 
-- pending
+- implementation updated after review: unlimited-link cache hits now use `TouchRedirect` so
+  PostgreSQL remains the authoritative redirect counter without a read-back query
+- `go build ./...`, `go vet ./...`, `go test ./...` all pass
+- service unit tests cover cache hit + touch, touch failure, miss+warm, cache-error fallback,
+  capped-link path, and computeTTL edges
 
 ## Review Findings
 
@@ -133,7 +139,9 @@ not break redirects.
 
 ### P1 High
 
-- [x] no open P1 findings
+- [x] Cache-hit path for unlimited links now calls `TouchRedirect` before returning cached data,
+  so PostgreSQL remains the authoritative `redirect_count` source while the hot path still
+  avoids a read-back query.
 
 ### P2 Medium
 
@@ -141,4 +149,5 @@ not break redirects.
 
 ### P3 Low
 
-- [x] no open P3 findings
+- [x] Task notes clarified that Redis boot connectivity is required, but readiness intentionally
+  stays PostgreSQL-only because Redis is a fail-open dependency for redirects.

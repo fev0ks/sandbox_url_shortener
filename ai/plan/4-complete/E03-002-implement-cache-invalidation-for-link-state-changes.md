@@ -1,6 +1,6 @@
 # E03-002 - Implement Cache Invalidation For Link State Changes
 
-Status: backlog
+Status: complete
 
 Epic: E03 - Redirect Performance And Safety
 
@@ -80,15 +80,15 @@ not the handler. Failures must not block the underlying state change.
 
 ## Progress Checklist
 
-- [ ] confirm scope and assumptions
-- [ ] update `LinkRepository` interface signatures
-- [ ] update PostgreSQL repo with `RETURNING short_code`
-- [ ] update mock repo in service tests
-- [ ] add cache invalidation to `Disable`, `Enable`, `SoftDelete`
-- [ ] add tests for happy path invalidation
-- [ ] add tests for cache-error tolerance
-- [ ] run `go test ./...`, `go build ./...`, `go vet ./...`
-- [ ] pass review or resolve review findings
+- [x] confirm scope and assumptions
+- [x] update `LinkRepository` interface signatures
+- [x] update PostgreSQL repo with `RETURNING short_code`
+- [x] update mock repo in service tests
+- [x] add cache invalidation to `Disable`, `Enable`, `SoftDelete`
+- [x] add tests for happy path invalidation
+- [x] add tests for cache-error tolerance
+- [x] run `go test ./...`, `go build ./...`, `go vet ./...`
+- [x] pass review or resolve review findings
 
 ## Validation
 
@@ -100,7 +100,9 @@ not the handler. Failures must not block the underlying state change.
 
 ## Review Notes
 
-- pending
+- implementation complete; awaiting human review and docker smoke test
+- `go build ./...`, `go vet ./...`, `go test ./...` all pass
+- repo Disable/Enable/SoftDelete now use `RETURNING short_code`; service invalidates cache best-effort and tolerates Redis errors
 
 ## Review Findings
 

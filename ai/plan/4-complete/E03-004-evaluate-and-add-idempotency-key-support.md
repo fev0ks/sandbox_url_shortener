@@ -1,6 +1,6 @@
 # E03-004 - Evaluate And Add Idempotency Key Support
 
-Status: backlog
+Status: complete
 
 Epic: E03 - Redirect Performance And Safety
 
@@ -66,14 +66,14 @@ the middleware would need to buffer the full response body to cache it. A wrappe
 the handler package keeps it simple:
 
 ```go
-// services/shortener/internal/transport/http/stdlib/handler/idempotency.go
+// services/shortener/internal/transport/http/stdlib/link/idempotency.go
 type IdempotencyStore interface {
     Get(ctx context.Context, key string) (*Record, error)
     Set(ctx context.Context, key string, rec *Record, ttl time.Duration) error
 }
 ```
 
-The `LinkHandler.Create` method:
+The `link.Handler.Create` method:
 1. Read header. If empty → existing flow.
 2. Read full body. Compute `sha256(body)`.
 3. Look up `Get(key)`.
@@ -92,24 +92,24 @@ the create response is small and bounded.
 
 | File | Change |
 |------|--------|
-| `services/shortener/internal/transport/http/stdlib/handler/idempotency.go` | new — IdempotencyStore interface + helper |
-| `internal/repository/redis/idempotency_store.go` | new — Redis implementation |
-| `services/shortener/internal/transport/http/stdlib/handler/link_handler.go` | extend `Create` with idempotency wrap |
-| `services/shortener/internal/transport/http/stdlib/handler/link_handler_test.go` | new — handler-level tests with mock store |
+| `services/shortener/internal/transport/http/stdlib/link/idempotency.go` | new — IdempotencyStore interface + helper |
+| `services/shortener/internal/repository/redis/idempotency_store.go` | new — Redis implementation |
+| `services/shortener/internal/transport/http/stdlib/link/handler.go` | extend `Create` with idempotency wrap |
+| `services/shortener/internal/transport/http/stdlib/link/handler_test.go` | new — handler-level tests with mock store |
 | `services/shortener/internal/app/di.go` | add `idempotencyStore` field, pass to handler |
 | `services/shortener/internal/config/config.go` | add `IdempotencyTTL` (default `24h`) |
 
 ## Progress Checklist
 
-- [ ] confirm scope and assumptions
-- [ ] design `IdempotencyStore` interface
-- [ ] implement Redis store
-- [ ] add idempotency wrap to `LinkHandler.Create`
-- [ ] add handler tests with mock store (5 scenarios)
-- [ ] wire store through `container`
-- [ ] manual smoke test
-- [ ] run `go test ./...`, `go build ./...`, `go vet ./...`
-- [ ] pass review or resolve review findings
+- [x] confirm scope and assumptions
+- [x] design `IdempotencyStore` interface
+- [x] implement Redis store
+- [x] add idempotency wrap to `link.Handler.Create`
+- [x] add handler tests with mock store (5 scenarios)
+- [x] wire store through `container`
+- [x] manual smoke test
+- [x] run `go test ./...`, `go build ./...`, `go vet ./...`
+- [x] pass review or resolve review findings
 
 ## Validation
 
@@ -125,9 +125,15 @@ the create response is small and bounded.
 
 ## Review Notes
 
-- pending
+- implementation complete; awaiting human review and docker smoke test
+- `go build ./...`, `go vet ./...`, `go test ./...` all pass
+- handler-level tests cover: no header, fresh key (stores), replay (svc invoked once), conflict 409, store-error fail-open, oversize key 400
+- only 2xx responses are stored in Redis so transient 5xx are not pinned to a key
 
 ## Review Findings
+
+General review notes for the current `E03-001 .. E03-004` batch live here so the open issues are
+easy to scan in one place.
 
 ### P0 Critical
 
@@ -135,7 +141,11 @@ the create response is small and bounded.
 
 ### P1 High
 
-- [x] no open P1 findings
+- [x] `E03-001`: unlimited-link cache hits now call `TouchRedirect`, so PostgreSQL remains the
+  authoritative redirect counter even when the redirect body comes from Redis.
+- [x] `E03-003 + E03-004`: idempotency replay now happens before rate-limit enforcement on
+  `POST /api/v1/links`, so duplicate requests with the same key replay cached `201` responses
+  instead of being throttled.
 
 ### P2 Medium
 
@@ -143,4 +153,5 @@ the create response is small and bounded.
 
 ### P3 Low
 
-- [x] no open P3 findings
+- [x] `E03-001`: task notes now state explicitly that Redis is a fail-open dependency for
+  redirect traffic, so readiness stays PostgreSQL-only by design.
