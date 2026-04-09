@@ -53,6 +53,42 @@ func (r *LinkRepo) Create(ctx context.Context, link *domain.Link) error {
 	return nil
 }
 
+// ListRecent returns non-deleted links ordered by newest first.
+func (r *LinkRepo) ListRecent(ctx context.Context, limit int) ([]*domain.Link, error) {
+	const q = `
+		SELECT id, short_code, original_url, title, created_by,
+		       created_at, updated_at, expires_at, max_clicks,
+		       redirect_count, disabled_at, deleted_at, last_accessed_at
+		FROM links
+		WHERE deleted_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT $1`
+
+	rows, err := r.pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("link repo list recent: %w", err)
+	}
+	defer rows.Close()
+
+	links := make([]*domain.Link, 0, limit)
+	for rows.Next() {
+		var link domain.Link
+		if err := rows.Scan(
+			&link.ID, &link.ShortCode, &link.OriginalURL, &link.Title, &link.CreatedBy,
+			&link.CreatedAt, &link.UpdatedAt, &link.ExpiresAt, &link.MaxClicks,
+			&link.RedirectCount, &link.DisabledAt, &link.DeletedAt, &link.LastAccessedAt,
+		); err != nil {
+			return nil, fmt.Errorf("link repo list recent scan: %w", err)
+		}
+		links = append(links, &link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("link repo list recent rows: %w", err)
+	}
+
+	return links, nil
+}
+
 // GetByID returns an active (non-deleted) link by its internal UUID.
 func (r *LinkRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
 	const q = `

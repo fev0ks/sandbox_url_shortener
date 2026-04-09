@@ -10,6 +10,7 @@ vars:
   GOLANGCI_LINT: '{{.BIN_DIR}}/golangci-lint'
   GCI: '{{.BIN_DIR}}/gci'
   GOFUMPT: '{{.BIN_DIR}}/gofumpt'
+  WEB_DIR: '{{.ROOT_DIR}}/services/web'
 
 tasks:
   install-formatters:
@@ -69,6 +70,19 @@ tasks:
       - mkdir -p {{.BIN_DIR}}
       - go build -o {{.BIN_DIR}}/shortener ./services/shortener/cmd/shortener
       - go build -o {{.BIN_DIR}}/analytics ./services/analytics/cmd/analytics
+
+  web-install:
+    desc: "Install web frontend dependencies"
+    dir: '{{.WEB_DIR}}'
+    cmds:
+      - npm ci
+
+  web-build:
+    desc: "Build the Next.js frontend"
+    dir: '{{.WEB_DIR}}'
+    deps: [web-install]
+    cmds:
+      - npm run build
 
   verify:
     desc: "Run lint, tests, and builds"

@@ -30,6 +30,11 @@ type Response struct {
 	LastAccessedAt *time.Time `json:"last_accessed_at,omitempty"`
 }
 
+// ListResponse is the JSON payload for GET /api/v1/links.
+type ListResponse struct {
+	Items []Response `json:"items"`
+}
+
 // toResponse converts a domain.Link to its API JSON shape.
 func toResponse(link *domain.Link, baseURL string) Response {
 	return Response{

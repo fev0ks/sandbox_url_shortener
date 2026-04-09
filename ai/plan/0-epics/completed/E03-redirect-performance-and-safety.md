@@ -1,5 +1,7 @@
 # E03 - Redirect Performance And Safety
 
+Status: complete
+
 ## Summary
 
 Performance and resilience epic for protecting the hot path and the create path after the core

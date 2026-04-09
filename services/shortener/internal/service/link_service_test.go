@@ -49,6 +49,7 @@ func (m *mockLinkCache) Delete(ctx context.Context, shortCode string) error {
 // mockLinkRepo is a test double for domain.LinkRepository.
 type mockLinkRepo struct {
 	createFn              func(ctx context.Context, link *domain.Link) error
+	listRecentFn          func(ctx context.Context, limit int) ([]*domain.Link, error)
 	getByIDFn             func(ctx context.Context, id uuid.UUID) (*domain.Link, error)
 	disableFn             func(ctx context.Context, id uuid.UUID) (string, error)
 	enableFn              func(ctx context.Context, id uuid.UUID) (string, error)
@@ -59,6 +60,10 @@ type mockLinkRepo struct {
 
 func (m *mockLinkRepo) Create(ctx context.Context, link *domain.Link) error {
 	return m.createFn(ctx, link)
+}
+
+func (m *mockLinkRepo) ListRecent(ctx context.Context, limit int) ([]*domain.Link, error) {
+	return m.listRecentFn(ctx, limit)
 }
 
 func (m *mockLinkRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
@@ -171,6 +176,33 @@ func TestGetByID_NotFound(t *testing.T) {
 	_, err := svc.GetByID(context.Background(), uuid.New())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestListRecent_Success(t *testing.T) {
+	expected := []*domain.Link{
+		{ShortCode: "newest"},
+		{ShortCode: "older"},
+	}
+	repo := &mockLinkRepo{
+		listRecentFn: func(_ context.Context, limit int) ([]*domain.Link, error) {
+			if limit != recentLinksLimit {
+				t.Fatalf("limit = %d, want %d", limit, recentLinksLimit)
+			}
+			return expected, nil
+		},
+	}
+	svc := NewLinkService(repo, nil, testLogger())
+
+	links, err := svc.ListRecent(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("len(links) = %d, want 2", len(links))
+	}
+	if links[0].ShortCode != "newest" {
+		t.Fatalf("first short code = %q, want newest", links[0].ShortCode)
 	}
 }
 

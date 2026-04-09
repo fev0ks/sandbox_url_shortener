@@ -44,6 +44,20 @@ services:
       timeout: 3s
       retries: 5
 
+  web:
+    build:
+      context: ../..
+      dockerfile: services/web/Dockerfile
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    env_file:
+      - ../../.env
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://shortener:8080
+    depends_on:
+      shortener:
+        condition: service_healthy
+
   analytics:
     build:
       context: ../..

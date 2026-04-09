@@ -22,11 +22,18 @@ import (
 
 // stubService is a minimal Service stub for handler tests.
 type stubService struct {
-	createFn func(ctx context.Context, in domain.CreateLinkInput) (*domain.Link, error)
+	createFn     func(ctx context.Context, in domain.CreateLinkInput) (*domain.Link, error)
+	listRecentFn func(ctx context.Context) ([]*domain.Link, error)
 }
 
 func (s *stubService) Create(ctx context.Context, in domain.CreateLinkInput) (*domain.Link, error) {
 	return s.createFn(ctx, in)
+}
+func (s *stubService) ListRecent(ctx context.Context) ([]*domain.Link, error) {
+	if s.listRecentFn == nil {
+		return nil, nil
+	}
+	return s.listRecentFn(ctx)
 }
 func (s *stubService) GetByID(_ context.Context, _ uuid.UUID) (*domain.Link, error) { return nil, nil }
 func (s *stubService) Disable(_ context.Context, _ uuid.UUID) (*domain.Link, error) { return nil, nil }
@@ -240,5 +247,61 @@ func TestCreate_KeyTooLong(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("got %d", rec.Code)
+	}
+}
+
+func TestListRecent_Success(t *testing.T) {
+	svc := &stubService{
+		listRecentFn: func(_ context.Context) ([]*domain.Link, error) {
+			return []*domain.Link{
+				{
+					ID:          uuid.MustParse("019d6f15-7ff2-7309-b7db-a8d24b35c2fe"),
+					ShortCode:   "WDDuQjd",
+					OriginalURL: "https://example.com/one",
+				},
+				{
+					ID:          uuid.MustParse("019d6f1d-6ba0-744b-b6dd-321c9a8f258f"),
+					ShortCode:   "PbLUfHw",
+					OriginalURL: "https://example.com/two",
+				},
+			}, nil
+		},
+	}
+	h := newHandler(svc, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/links", nil)
+	h.ListRecent(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+
+	var body ListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(body.Items))
+	}
+	if body.Items[0].ShortCode != "WDDuQjd" {
+		t.Fatalf("first item short code = %q", body.Items[0].ShortCode)
+	}
+}
+
+func TestListRecent_InternalError(t *testing.T) {
+	svc := &stubService{
+		listRecentFn: func(_ context.Context) ([]*domain.Link, error) {
+			return nil, errors.New("boom")
+		},
+	}
+	h := newHandler(svc, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/links", nil)
+	h.ListRecent(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("got %d, want 500", rec.Code)
 	}
 }

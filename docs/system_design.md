@@ -22,6 +22,7 @@ Detailed defaults for data stores, migrations, and logging live in
 This design covers the MVP and the planned production-like stack:
 
 - `shortener-service` as the main user-facing service
+- `web` as the browser-facing frontend service
 - `analytics` service
 - `k6` load generator for controlled performance testing
 - PostgreSQL
@@ -55,6 +56,7 @@ flowchart LR
         cli["Make / Local Automation"]
 
         subgraph compose["Docker Compose Runtime (default early stage)"]
+            web["web (Next.js)"]
             shortener["shortener-service (shortener)"]
             analytics["analytics"]
             pg["PostgreSQL"]
@@ -69,7 +71,8 @@ flowchart LR
         end
     end
 
-    user --> shortener
+    user --> web
+    web --> shortener
     operator --> grafana
     operator --> kibana
     k6 --> shortener
@@ -104,11 +107,13 @@ flowchart LR
         cli["Make / Local Automation"]
         prom["Prometheus"]
         grafana["Grafana"]
+        web["web"]
     end
 
     subgraph kind["Local kind Cluster + Helm (later stage)"]
         helm["Helm Release"]
         ingress["Ingress / Service"]
+        k8s_web["web Deployment"]
         k8s_shortener["shortener-service Deployment"]
         k8s_analytics["analytics Deployment"]
     end
@@ -124,10 +129,12 @@ flowchart LR
     end
 
     cli --> helm
+    helm --> k8s_web
     helm --> k8s_shortener
     helm --> k8s_analytics
     user --> ingress
-    ingress --> k8s_shortener
+    ingress --> k8s_web
+    k8s_web --> k8s_shortener
 
     k8s_shortener --> pg
     k8s_shortener --> redis
@@ -152,6 +159,7 @@ flowchart LR
 flowchart TB
     subgraph app["Application Layer"]
         shortener["shortener-service (`services/shortener/cmd/shortener`)"]
+        web["web (`services/web`)"]
         analytics["services/analytics/cmd/analytics"]
     end
 
@@ -171,6 +179,7 @@ flowchart TB
         grafana["Grafana"]
     end
 
+    web --> shortener
     shortener --> pg
     shortener --> redis
     shortener --> kafka
@@ -193,7 +202,7 @@ flowchart TB
 
 ### `shortener-service`
 
-The main user-facing service is `shortener-service`. Its current baseline binary is
+The main API service is `shortener-service`. Its current baseline binary is
 `services/shortener/cmd/shortener`, and it is implemented as a modular monolith with explicit
 layers:
 
@@ -213,6 +222,18 @@ Constraints:
 - storage and broker integrations stay behind repository or infrastructure boundaries
 - future alternative HTTP runtimes such as `api-http-chi` or `api-http-gin` may reuse the same
   service and repository layers, but they are not part of the MVP baseline
+
+### `web`
+
+The browser-facing frontend lives in `services/web` as a separate runtime. It should consume the
+shortener API rather than embedding HTML templates into the Go service.
+
+Constraints:
+
+- UI state and browser rendering live in the frontend service
+- backend contracts stay explicit; missing frontend-facing API needs should be added deliberately
+- the frontend runtime must not bypass the shortener service and talk directly to databases or
+  Redis
 
 ### `analytics`
 

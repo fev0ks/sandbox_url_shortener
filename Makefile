@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/docker-compose/docker-compose.yml
 
-.PHONY: build test lint run stop migrate-up migrate-down migrate-create migrate-version
+.PHONY: build test lint run stop web-install web-build migrate-up migrate-down migrate-create migrate-version
 
 DB_DSN ?= postgres://shortener:shortener@localhost:5432/shortener?sslmode=disable
 MIGRATE_PATH := services/shortener/migrations/postgres
@@ -25,6 +25,14 @@ run:
 ## stop: tear down the Docker Compose stack
 stop:
 	docker compose -f $(COMPOSE_FILE) down
+
+## web-install: install frontend dependencies
+web-install:
+	cd services/web && npm ci
+
+## web-build: build the Next.js frontend
+web-build:
+	cd services/web && npm run build
 
 ## migrate-up: apply all pending PostgreSQL migrations
 migrate-up:

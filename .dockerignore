@@ -1,0 +1,7 @@
+.git
+.gitignore
+.idea
+bin
+services/web/node_modules
+services/web/.next
+services/web/tsconfig.tsbuildinfo

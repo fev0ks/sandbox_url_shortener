@@ -39,6 +39,7 @@ type Handler struct {
 // service-shaped interface than necessary.
 type Service interface {
 	Create(ctx context.Context, input domain.CreateLinkInput) (*domain.Link, error)
+	ListRecent(ctx context.Context) ([]*domain.Link, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error)
 	Disable(ctx context.Context, id uuid.UUID) (*domain.Link, error)
 	Enable(ctx context.Context, id uuid.UUID) (*domain.Link, error)
@@ -65,6 +66,7 @@ func NewHandler(
 // Register wires the link routes onto the given mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/links", h.Create)
+	mux.HandleFunc("GET /api/v1/links", h.ListRecent)
 	mux.HandleFunc("GET /api/v1/links/{id}", h.GetByID)
 	mux.HandleFunc("POST /api/v1/links/{id}/disable", h.Disable)
 	mux.HandleFunc("POST /api/v1/links/{id}/enable", h.Enable)
@@ -226,6 +228,23 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 
 	h.log.DebugContext(r.Context(), "link fetched", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
 	respond.JSON(w, http.StatusOK, toResponse(link, h.baseURL))
+}
+
+// ListRecent handles GET /api/v1/links.
+func (h *Handler) ListRecent(w http.ResponseWriter, r *http.Request) {
+	h.log.DebugContext(r.Context(), "listing recent links")
+	links, err := h.svc.ListRecent(r.Context())
+	if err != nil {
+		h.log.ErrorContext(r.Context(), "failed to list recent links", "error", err)
+		respond.Error(r.Context(), w, http.StatusInternalServerError, "internal_error", "failed to list links")
+		return
+	}
+
+	items := make([]Response, 0, len(links))
+	for _, link := range links {
+		items = append(items, toResponse(link, h.baseURL))
+	}
+	respond.JSON(w, http.StatusOK, ListResponse{Items: items})
 }
 
 // Disable handles POST /api/v1/links/{id}/disable.

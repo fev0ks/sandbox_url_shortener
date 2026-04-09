@@ -32,6 +32,8 @@ Before making changes:
 - Go `1.25`
 - HTTP API baseline is `net/http` with `services/shortener/cmd/shortener`
 - Background analytics runtime lives in `services/analytics/cmd/analytics`
+- Browser frontend runtime lives in `services/web` and should remain a separate service when UI
+  work moves to `Next.js`
 - Start simple
 - Do not introduce async infrastructure, caching, queues, or background jobs unless the task
   requires them
@@ -76,6 +78,7 @@ Before making changes:
 - Keep service-owned config in `services/<service>/internal/config`
 - Keep service-owned migrations in `services/<service>/migrations`
 - Keep service-owned image builds in `services/<service>/Dockerfile`
+- Keep frontend runtime assets and package manager files inside `services/web`
 - Keep `deploy/` for orchestration only: `docker-compose`, Helm, kind, manifests, env overlays
 - Do not add new repo-root `migrations/`, `Dockerfile`, or shared config packages unless the
   artifact is truly cross-service infrastructure

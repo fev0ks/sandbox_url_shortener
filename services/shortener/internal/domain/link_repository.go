@@ -12,6 +12,9 @@ type LinkRepository interface {
 	// violates the unique partial index.
 	Create(ctx context.Context, link *Link) error
 
+	// ListRecent returns the most recently created non-deleted links first.
+	ListRecent(ctx context.Context, limit int) ([]*Link, error)
+
 	// GetByID returns an active (non-deleted) link by its internal ID.
 	// Returns ErrNotFound if the link does not exist or is soft-deleted.
 	GetByID(ctx context.Context, id uuid.UUID) (*Link, error)

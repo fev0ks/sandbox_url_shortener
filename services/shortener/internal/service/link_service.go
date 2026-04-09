@@ -15,6 +15,7 @@ import (
 )
 
 const maxCollisionRetries = 5
+const recentLinksLimit = 20
 
 // cacheTTLCap is the maximum lifetime of a cached redirect entry. The
 // effective TTL is min(cacheTTLCap, time_until_expires_at).
@@ -99,6 +100,16 @@ func (s *LinkService) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, 
 	}
 	s.log.DebugContext(ctx, "link loaded", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
 	return link, nil
+}
+
+// ListRecent returns the most recently created non-deleted links.
+func (s *LinkService) ListRecent(ctx context.Context) ([]*domain.Link, error) {
+	s.log.DebugContext(ctx, "listing recent links", slog.Int("limit", recentLinksLimit))
+	links, err := s.repo.ListRecent(ctx, recentLinksLimit)
+	if err != nil {
+		return nil, fmt.Errorf("link service list recent: %w", err)
+	}
+	return links, nil
 }
 
 // Disable marks a link as disabled and invalidates any cached redirect entry.
