@@ -17,12 +17,12 @@ import (
 )
 
 // App is the composition root for the analytics binary.
-// It exposes health and metrics only; event consumer logic is added in E05.
 type App struct {
-	cfg     *config.Config
-	log     *slog.Logger
-	srv     *http.Server
-	closers []func() error
+	cfg       *config.Config
+	log       *slog.Logger
+	srv       *http.Server
+	closers   []func() error
+	consumers []Consumer
 }
 
 // NewApp initializes all dependencies and returns a ready-to-run analytics App.
@@ -33,6 +33,9 @@ func NewApp(ctx context.Context) (*App, error) {
 		return nil, fmt.Errorf("init config: %w", err)
 	}
 	a.initLogger()
+	if err := a.initConsumers(ctx); err != nil {
+		return nil, fmt.Errorf("init consumers: %w", err)
+	}
 	a.initHTTPServer()
 
 	return a, nil
@@ -42,6 +45,8 @@ func NewApp(ctx context.Context) (*App, error) {
 func (a *App) Run(ctx context.Context) {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	a.startConsumers(ctx)
 
 	go func() {
 		a.log.Info("analytics admin starting", "port", a.cfg.AdminPort)
@@ -64,6 +69,8 @@ func (a *App) Shutdown(ctx context.Context) {
 		a.log.Error("http shutdown error", "error", err)
 	}
 
+	a.waitConsumers(ctx)
+
 	for i := len(a.closers) - 1; i >= 0; i-- {
 		if err := a.closers[i](); err != nil {
 			a.log.Error("closer error", "error", err)
@@ -84,10 +91,28 @@ func (a *App) initLogger() {
 	a.log = logger.New(a.cfg.LogLevel, "analytics", a.cfg.Env)
 }
 
+func (a *App) initConsumers(ctx context.Context) error {
+	linkVisited, err := newLinkVisitedConsumer(ctx, a.cfg, a.log)
+	if err != nil {
+		return err
+	}
+	if linkVisited != nil {
+		a.consumers = append(a.consumers, linkVisited)
+		a.addCloser(linkVisited.Close)
+	}
+	return nil
+}
+
+func (a *App) startConsumers(ctx context.Context) {
+	for _, consumer := range a.consumers {
+		consumer.Start(ctx)
+	}
+}
+
 func (a *App) initHTTPServer() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /health/live", health.LiveHandler())
-	mux.Handle("GET /health/ready", health.ReadyHandler()) // No infra deps yet; upgraded in E05.
+	mux.Handle("GET /health/ready", health.ReadyHandler(a.consumersReady))
 	mux.Handle("GET /metrics", metrics.Handler())
 
 	handler := middleware.Compose(mux,
@@ -103,5 +128,33 @@ func (a *App) initHTTPServer() {
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
+	}
+}
+
+func (a *App) addCloser(fn func() error) {
+	a.closers = append(a.closers, fn)
+}
+
+func (a *App) consumersReady(ctx context.Context) error {
+	for _, consumer := range a.consumers {
+		if err := consumer.Ready(ctx); err != nil {
+			return fmt.Errorf("%s consumer not ready: %w", consumer.Name(), err)
+		}
+	}
+	return nil
+}
+
+func (a *App) waitConsumers(ctx context.Context) {
+	for _, consumer := range a.consumers {
+		done := consumer.Done()
+		if done == nil {
+			continue
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			a.log.Warn("analytics consumer shutdown timed out", "consumer", consumer.Name())
+			return
+		}
 	}
 }

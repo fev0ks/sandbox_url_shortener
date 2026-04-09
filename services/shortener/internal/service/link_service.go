@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"sandbox_url_shortener/internal/platform/eventing"
 	"sandbox_url_shortener/services/shortener/internal/domain"
 	"sandbox_url_shortener/services/shortener/internal/shortcode"
 )
@@ -23,15 +24,16 @@ const cacheTTLCap = 24 * time.Hour
 
 // LinkService implements the shortener business use cases consumed by transport handlers.
 type LinkService struct {
-	repo  domain.LinkRepository
-	cache domain.LinkCache // optional; nil disables the cache path
-	log   *slog.Logger
+	repo           domain.LinkRepository
+	cache          domain.LinkCache // optional; nil disables the cache path
+	visitPublisher LinkVisitPublisher
+	log            *slog.Logger
 }
 
 // NewLinkService creates a new link service. Pass a nil cache to disable
 // cache-aside; the service then talks to the repository directly.
-func NewLinkService(repo domain.LinkRepository, cache domain.LinkCache, log *slog.Logger) *LinkService {
-	return &LinkService{repo: repo, cache: cache, log: log}
+func NewLinkService(repo domain.LinkRepository, cache domain.LinkCache, visitPublisher LinkVisitPublisher, log *slog.Logger) *LinkService {
+	return &LinkService{repo: repo, cache: cache, visitPublisher: visitPublisher, log: log}
 }
 
 // Create generates a UUIDv7 and short code, then persists a new link.
@@ -186,11 +188,18 @@ func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Li
 			s.log.WarnContext(ctx, "link cache get failed; falling back to db",
 				"error", err, "short_code", shortCode)
 		} else if cached != nil && cached.MaxClicks == 0 && !isExpired(cached.ExpiresAt, now) {
+			linkID, err := uuid.Parse(cached.LinkID)
+			if err != nil {
+				s.log.WarnContext(ctx, "cached link id invalid; falling back to db",
+					"error", err, "short_code", shortCode)
+				goto resolveFromRepo
+			}
 			if err := s.repo.TouchRedirect(ctx, shortCode); err != nil {
 				return nil, err
 			}
 			s.log.DebugContext(ctx, "redirect served from cache after touch", slog.String("short_code", shortCode))
 			return &domain.Link{
+				ID:          linkID,
 				ShortCode:   shortCode,
 				OriginalURL: cached.OriginalURL,
 				MaxClicks:   cached.MaxClicks,
@@ -199,6 +208,7 @@ func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Li
 		}
 	}
 
+resolveFromRepo:
 	link, err := s.repo.ResolveAndIncrement(ctx, shortCode)
 	if err != nil {
 		return nil, err
@@ -216,6 +226,58 @@ func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Li
 	return link, nil
 }
 
+// ResolveAndTrackVisit resolves a short code for redirect and then publishes a
+// best-effort link.visited event. Publish failures are logged and swallowed so
+// redirect correctness never depends on Kafka availability.
+func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string, visit domain.VisitMetadata) (*domain.Link, error) {
+	link, err := s.Resolve(ctx, shortCode)
+	if err != nil {
+		return nil, err
+	}
+	if s.visitPublisher == nil {
+		return link, nil
+	}
+
+	occurredAt := visit.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+
+	event, err := eventing.NewLinkVisited(eventing.LinkVisitedParams{
+		EventID:    uuid.NewString(),
+		RequestID:  visit.RequestID,
+		LinkID:     link.ID.String(),
+		ShortCode:  link.ShortCode,
+		OccurredAt: occurredAt,
+		IP:         visit.IP,
+		UserAgent:  visit.UserAgent,
+		Referer:    visit.Referer,
+	})
+	if err != nil {
+		s.log.WarnContext(ctx, "link.visited build failed; skipping publish",
+			"error", err, "short_code", shortCode)
+		return link, nil
+	}
+
+	if err := s.visitPublisher.PublishLinkVisited(ctx, event); err != nil {
+		s.log.WarnContext(ctx, "link.visited publish failed",
+			"error", err,
+			"short_code", shortCode,
+			"link_id", link.ID.String(),
+			"event_id", event.EventID,
+		)
+		return link, nil
+	}
+
+	s.log.DebugContext(ctx, "link.visited published",
+		slog.String("short_code", shortCode),
+		slog.String("link_id", link.ID.String()),
+		slog.String("event_id", event.EventID),
+	)
+
+	return link, nil
+}
+
 // warmCache writes the resolved link into the cache best-effort. Errors are
 // logged and swallowed — they must never affect the redirect response.
 func (s *LinkService) warmCache(ctx context.Context, link *domain.Link, now time.Time) {
@@ -224,6 +286,7 @@ func (s *LinkService) warmCache(ctx context.Context, link *domain.Link, now time
 		return
 	}
 	entry := &domain.CachedLink{
+		LinkID:      link.ID.String(),
 		OriginalURL: link.OriginalURL,
 		MaxClicks:   link.MaxClicks,
 		ExpiresAt:   link.ExpiresAt,

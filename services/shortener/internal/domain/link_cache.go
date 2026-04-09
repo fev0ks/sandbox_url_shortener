@@ -28,6 +28,7 @@ type LinkCache interface {
 // links with MaxClicks > 0 always confirm against PostgreSQL even on hit,
 // because the cache cannot keep RedirectCount in sync under load.
 type CachedLink struct {
+	LinkID      string     `json:"link_id"`
 	OriginalURL string     `json:"original_url"`
 	MaxClicks   int64      `json:"max_clicks"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`

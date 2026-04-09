@@ -6,7 +6,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"sandbox_url_shortener/internal/platform/httppolicy"
+	"sandbox_url_shortener/internal/platform/requestmeta"
 	"sandbox_url_shortener/services/shortener/internal/domain"
 )
 
@@ -18,7 +21,7 @@ type Handler struct {
 
 // Resolver is the exact capability the redirect transport needs.
 type Resolver interface {
-	Resolve(ctx context.Context, shortCode string) (*domain.Link, error)
+	ResolveAndTrackVisit(ctx context.Context, shortCode string, visit domain.VisitMetadata) (*domain.Link, error)
 }
 
 // NewHandler creates a new redirect HTTP handler.
@@ -40,7 +43,13 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 	shortCode := r.PathValue("shortCode")
 	h.log.DebugContext(r.Context(), "redirect requested", slog.String("short_code", shortCode))
 
-	link, err := h.svc.Resolve(r.Context(), shortCode)
+	link, err := h.svc.ResolveAndTrackVisit(r.Context(), shortCode, domain.VisitMetadata{
+		RequestID:  requestmeta.RequestID(r.Context()),
+		OccurredAt: time.Now().UTC(),
+		IP:         httppolicy.ClientIP(r),
+		UserAgent:  r.UserAgent(),
+		Referer:    r.Referer(),
+	})
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		h.log.InfoContext(r.Context(), "redirect target not found", slog.String("short_code", shortCode))

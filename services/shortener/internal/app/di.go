@@ -3,12 +3,14 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
 	"sandbox_url_shortener/services/shortener/internal/config"
+	kafkarepo "sandbox_url_shortener/services/shortener/internal/repository/kafka"
 	"sandbox_url_shortener/services/shortener/internal/repository/postgres"
 	redisrepo "sandbox_url_shortener/services/shortener/internal/repository/redis"
 	"sandbox_url_shortener/services/shortener/internal/service"
@@ -34,6 +36,8 @@ type container struct {
 	linkCache        *redisrepo.LinkCache
 	rateLimiter      *redisrepo.FixedWindowLimiter
 	idempotencyStore *redisrepo.IdempotencyStore
+	visitPublisher   service.LinkVisitPublisher
+	visitCloser      interface{ Close() error }
 
 	// Services — business logic.
 	linkSvc *service.LinkService
@@ -60,9 +64,15 @@ func newContainer(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, redi
 		time.Minute,
 	)
 	c.idempotencyStore = redisrepo.NewIdempotencyStore(redisClient)
+	if cfg.KafkaProducerEnabled {
+		basePublisher := kafkarepo.NewLinkVisitPublisher(splitBrokers(cfg.KafkaBrokers), cfg.KafkaTopicLinkVisited)
+		asyncPublisher := newAsyncLinkVisitPublisher(log, basePublisher)
+		c.visitPublisher = asyncPublisher
+		c.visitCloser = asyncPublisher
+	}
 
 	// Services.
-	c.linkSvc = service.NewLinkService(c.linkRepo, c.linkCache, log)
+	c.linkSvc = service.NewLinkService(c.linkRepo, c.linkCache, c.visitPublisher, log)
 
 	// HTTP feature handlers.
 	c.linkHandler = link.NewHandler(
@@ -86,4 +96,15 @@ func wrapInitErr(component string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("container: init %s: %w", component, err)
+}
+
+func splitBrokers(raw string) []string {
+	parts := strings.Split(raw, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if broker := strings.TrimSpace(part); broker != "" {
+			brokers = append(brokers, broker)
+		}
+	}
+	return brokers
 }

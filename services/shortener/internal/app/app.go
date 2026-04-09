@@ -51,6 +51,9 @@ func NewApp(ctx context.Context) (*App, error) {
 
 func (a *App) initContainer() {
 	a.di = newContainer(a.cfg, a.log, a.pool, a.redis)
+	if a.di.visitCloser != nil {
+		a.addCloser(a.di.visitCloser.Close)
+	}
 }
 
 // initRedis creates the Redis client and verifies connectivity at boot.

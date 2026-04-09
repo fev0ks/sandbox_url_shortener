@@ -103,7 +103,7 @@ func TestCreate_Success(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	link, err := svc.Create(context.Background(), domain.CreateLinkInput{
 		OriginalURL: "https://example.com",
@@ -133,7 +133,7 @@ func TestCreate_CollisionRetry(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	link, err := svc.Create(context.Background(), domain.CreateLinkInput{
 		OriginalURL: "https://example.com",
@@ -155,7 +155,7 @@ func TestCreate_CollisionExhausted(t *testing.T) {
 			return domain.ErrShortCodeCollision
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	_, err := svc.Create(context.Background(), domain.CreateLinkInput{
 		OriginalURL: "https://example.com",
@@ -171,7 +171,7 @@ func TestGetByID_NotFound(t *testing.T) {
 			return nil, domain.ErrNotFound
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	_, err := svc.GetByID(context.Background(), uuid.New())
 	if !errors.Is(err, domain.ErrNotFound) {
@@ -192,7 +192,7 @@ func TestListRecent_Success(t *testing.T) {
 			return expected, nil
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	links, err := svc.ListRecent(context.Background())
 	if err != nil {
@@ -213,7 +213,7 @@ func TestResolve_Success(t *testing.T) {
 			return expected, nil
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	link, err := svc.Resolve(context.Background(), "abc1234")
 	if err != nil {
@@ -230,7 +230,7 @@ func TestResolve_Gone(t *testing.T) {
 			return nil, domain.ErrLinkGone
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	_, err := svc.Resolve(context.Background(), "abc1234")
 	if !errors.Is(err, domain.ErrLinkGone) {
@@ -244,7 +244,7 @@ func TestSoftDelete_NotFound(t *testing.T) {
 			return "", domain.ErrNotFound
 		},
 	}
-	svc := NewLinkService(repo, nil, testLogger())
+	svc := NewLinkService(repo, nil, nil, testLogger())
 
 	err := svc.SoftDelete(context.Background(), uuid.New())
 	if !errors.Is(err, domain.ErrNotFound) {
@@ -262,7 +262,7 @@ func TestDisable_InvalidatesCache(t *testing.T) {
 		},
 	}
 	cache := &mockLinkCache{}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	if _, err := svc.Disable(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("unexpected: %v", err)
@@ -282,7 +282,7 @@ func TestEnable_InvalidatesCache(t *testing.T) {
 		},
 	}
 	cache := &mockLinkCache{}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	if _, err := svc.Enable(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("unexpected: %v", err)
@@ -299,7 +299,7 @@ func TestSoftDelete_InvalidatesCache(t *testing.T) {
 		},
 	}
 	cache := &mockLinkCache{}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	if err := svc.SoftDelete(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("unexpected: %v", err)
@@ -320,7 +320,7 @@ func TestStateChange_CacheErrorTolerated(t *testing.T) {
 			return errors.New("redis down")
 		},
 	}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	if err := svc.SoftDelete(context.Background(), uuid.New()); err != nil {
 		t.Fatalf("expected delete to succeed despite cache error, got: %v", err)
@@ -344,10 +344,14 @@ func TestResolve_CacheHit_NoDB(t *testing.T) {
 	}
 	cache := &mockLinkCache{
 		getFn: func(_ context.Context, _ string) (*domain.CachedLink, error) {
-			return &domain.CachedLink{OriginalURL: "https://example.com", MaxClicks: 0}, nil
+			return &domain.CachedLink{
+				LinkID:      "019d6f15-7ff2-7309-b7db-a8d24b35c2fe",
+				OriginalURL: "https://example.com",
+				MaxClicks:   0,
+			}, nil
 		},
 	}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	link, err := svc.Resolve(context.Background(), "abc1234")
 	if err != nil {
@@ -376,10 +380,14 @@ func TestResolve_CacheHit_TouchErrorReturned(t *testing.T) {
 	}
 	cache := &mockLinkCache{
 		getFn: func(_ context.Context, _ string) (*domain.CachedLink, error) {
-			return &domain.CachedLink{OriginalURL: "https://example.com", MaxClicks: 0}, nil
+			return &domain.CachedLink{
+				LinkID:      "019d6f15-7ff2-7309-b7db-a8d24b35c2fe",
+				OriginalURL: "https://example.com",
+				MaxClicks:   0,
+			}, nil
 		},
 	}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	_, err := svc.Resolve(context.Background(), "abc1234")
 	if !errors.Is(err, domain.ErrLinkGone) {
@@ -399,7 +407,7 @@ func TestResolve_CacheMiss_DBThenWarm(t *testing.T) {
 			return nil, nil // miss
 		},
 	}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	link, err := svc.Resolve(context.Background(), "abc1234")
 	if err != nil {
@@ -428,7 +436,7 @@ func TestResolve_CacheError_FallsBackToDB(t *testing.T) {
 			return errors.New("still down")
 		},
 	}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	link, err := svc.Resolve(context.Background(), "abc1234")
 	if err != nil {
@@ -453,7 +461,7 @@ func TestResolve_CacheHit_CapWithMaxClicks_GoesToDB(t *testing.T) {
 			return &domain.CachedLink{OriginalURL: "https://example.com", MaxClicks: 5}, nil
 		},
 	}
-	svc := NewLinkService(repo, cache, testLogger())
+	svc := NewLinkService(repo, cache, nil, testLogger())
 
 	if _, err := svc.Resolve(context.Background(), "abc1234"); err != nil {
 		t.Fatalf("unexpected: %v", err)

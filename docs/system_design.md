@@ -241,11 +241,19 @@ The `analytics` binary is intentionally narrow:
 
 - consume Kafka messages
 - validate and deserialize event payloads
-- write analytics events to ClickHouse
+- hand validated events to a sink boundary
 - emit logs and metrics for consumer health
 
-The analytics service must tolerate at-least-once delivery and avoid making redirect success depend on any of
-its behavior.
+Current bootstrap behavior in `E05` is deliberately thin:
+
+- Kafka consumer runtime lives in `services/analytics/internal/app`
+- invalid payloads are handled explicitly at the consumer boundary
+- sink failures use bounded retry and are forwarded to DLQ after retry budget is exhausted
+- the sink is a logging sink first; ClickHouse storage is added in `E06`
+- readiness reflects broker connectivity and consumer loop health once Kafka is enabled
+
+The analytics service must tolerate at-least-once delivery and avoid making redirect success
+depend on any of its behavior.
 
 Although `analytics` is not user-facing, it exposes a lightweight HTTP server for health and metrics:
 
@@ -282,6 +290,10 @@ readiness probes target the same endpoints via `httpGet`.
 - decouples redirect flow from analytics processing
 - carries versioned `link.visited` events
 - allows best-effort event publishing on the request path
+- local Docker Compose uses a single-node broker with internal listener `kafka:9092` and host
+  listener `localhost:29092`
+- local topic bootstrap should create both the main `link.visited.v1` topic and the paired
+  `link.visited.v1.dlq` topic
 
 ### ClickHouse
 
