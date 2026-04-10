@@ -99,6 +99,10 @@ body {
   gap: 20px;
 }
 
+.stats-panel {
+  margin-top: 20px;
+}
+
 .dashboard-card,
 .details-card,
 .empty-state-card {
@@ -108,6 +112,56 @@ body {
   background: var(--card);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+}
+
+.stats-grid {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stats-card {
+  padding: 20px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.stats-card h3 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+}
+
+.stats-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.stats-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.stats-list li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.stats-list span {
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.stats-list strong {
+  white-space: nowrap;
 }
 
 .dashboard-card-head {
@@ -300,6 +354,13 @@ body {
 .short-url-box code {
   font-size: 0.98rem;
   word-break: break-all;
+}
+
+.link-action-row {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .result-meta {

@@ -1,0 +1,12 @@
+<clickhouse>
+  <users>
+    <default>
+      <!-- Local development only: allow repo-local services to reach ClickHouse
+           from Docker and host processes without provisioning a separate user. -->
+      <password></password>
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+    </default>
+  </users>
+</clickhouse>

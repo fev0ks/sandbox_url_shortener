@@ -8,7 +8,7 @@ import {
   initialCreateLinkState,
   type CreateLinkActionState,
 } from "@/lib/create-link-action-state";
-import { createLink, ShortenerApiError } from "@/lib/shortener-api";
+import { ApiError, createLink } from "@/lib/shortener-api";
 
 export async function createLinkAction(
   _prevState: CreateLinkActionState,
@@ -35,7 +35,7 @@ export async function createLinkAction(
       createdLink,
     };
   } catch (error) {
-    if (error instanceof ShortenerApiError) {
+    if (error instanceof ApiError) {
       return {
         status: "error",
         values: parsed.values,

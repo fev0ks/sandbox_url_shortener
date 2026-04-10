@@ -60,6 +60,10 @@ type linkVisitedConsumer struct {
 }
 
 func newLinkVisitedConsumer(ctx context.Context, cfg *config.Config, log *slog.Logger) (*linkVisitedConsumer, error) {
+	return newLinkVisitedConsumerWithSink(ctx, cfg, log, service.NewLoggingLinkVisitSink(log))
+}
+
+func newLinkVisitedConsumerWithSink(ctx context.Context, cfg *config.Config, log *slog.Logger, sink service.LinkVisitSink) (*linkVisitedConsumer, error) {
 	if !cfg.KafkaConsumerEnabled {
 		return nil, nil
 	}
@@ -73,6 +77,9 @@ func newLinkVisitedConsumer(ctx context.Context, cfg *config.Config, log *slog.L
 		if closeErr := repo.Close(); closeErr != nil {
 			log.Warn("analytics consumer close after failed check", "error", closeErr)
 		}
+		if closeErr := dlq.Close(); closeErr != nil {
+			log.Warn("analytics DLQ publisher close after failed check", "error", closeErr)
+		}
 		return nil, err
 	}
 
@@ -81,7 +88,7 @@ func newLinkVisitedConsumer(ctx context.Context, cfg *config.Config, log *slog.L
 		cfg:  cfg,
 		repo: repo,
 		dlq:  dlq,
-		sink: service.NewLoggingLinkVisitSink(log),
+		sink: sink,
 		done: make(chan struct{}),
 	}, nil
 }

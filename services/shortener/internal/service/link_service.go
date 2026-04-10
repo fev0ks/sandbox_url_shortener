@@ -182,33 +182,12 @@ func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Li
 	s.log.DebugContext(ctx, "resolving short code", slog.String("short_code", shortCode))
 
 	now := time.Now().UTC()
-	if s.cache != nil {
-		cached, err := s.cache.Get(ctx, shortCode)
-		if err != nil {
-			s.log.WarnContext(ctx, "link cache get failed; falling back to db",
-				"error", err, "short_code", shortCode)
-		} else if cached != nil && cached.MaxClicks == 0 && !isExpired(cached.ExpiresAt, now) {
-			linkID, err := uuid.Parse(cached.LinkID)
-			if err != nil {
-				s.log.WarnContext(ctx, "cached link id invalid; falling back to db",
-					"error", err, "short_code", shortCode)
-				goto resolveFromRepo
-			}
-			if err := s.repo.TouchRedirect(ctx, shortCode); err != nil {
-				return nil, err
-			}
-			s.log.DebugContext(ctx, "redirect served from cache after touch", slog.String("short_code", shortCode))
-			return &domain.Link{
-				ID:          linkID,
-				ShortCode:   shortCode,
-				OriginalURL: cached.OriginalURL,
-				MaxClicks:   cached.MaxClicks,
-				ExpiresAt:   cached.ExpiresAt,
-			}, nil
-		}
+	if link, ok, err := s.resolveFromCache(ctx, shortCode, now); err != nil {
+		return nil, err
+	} else if ok {
+		return link, nil
 	}
 
-resolveFromRepo:
 	link, err := s.repo.ResolveAndIncrement(ctx, shortCode)
 	if err != nil {
 		return nil, err
@@ -224,6 +203,43 @@ resolveFromRepo:
 		slog.Int64("redirect_count", link.RedirectCount),
 	)
 	return link, nil
+}
+
+func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, now time.Time) (*domain.Link, bool, error) {
+	if s.cache == nil {
+		return nil, false, nil
+	}
+
+	cached, err := s.cache.Get(ctx, shortCode)
+	if err != nil {
+		s.log.WarnContext(ctx, "link cache get failed; falling back to db",
+			"error", err, "short_code", shortCode)
+		return nil, false, nil
+	}
+	if cached == nil || cached.MaxClicks != 0 || isExpired(cached.ExpiresAt, now) {
+		return nil, false, nil
+	}
+
+	linkID, err := uuid.Parse(cached.LinkID)
+	if err != nil {
+		s.log.WarnContext(ctx, "cached link id invalid; falling back to db",
+			"error", err, "short_code", shortCode)
+		return nil, false, nil
+	}
+
+	if err := s.repo.TouchRedirect(ctx, shortCode); err != nil {
+		return nil, false, err
+	}
+
+	s.log.DebugContext(ctx, "redirect served from cache after touch", slog.String("short_code", shortCode))
+
+	return &domain.Link{
+		ID:          linkID,
+		ShortCode:   shortCode,
+		OriginalURL: cached.OriginalURL,
+		MaxClicks:   cached.MaxClicks,
+		ExpiresAt:   cached.ExpiresAt,
+	}, true, nil
 }
 
 // ResolveAndTrackVisit resolves a short code for redirect and then publishes a

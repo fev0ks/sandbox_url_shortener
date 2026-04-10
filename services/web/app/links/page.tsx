@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { listLinks, ShortenerApiError } from "@/lib/shortener-api";
+import { ApiError, listLinks } from "@/lib/shortener-api";
 
 type LinksPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -97,6 +97,24 @@ export default async function LinksPage({ searchParams }: LinksPageProps) {
                   <div className="short-url-box compact">
                     <code>{item.short_url}</code>
                   </div>
+                  <div className="link-action-row">
+                    <a
+                      className="secondary-link"
+                      href={item.short_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open short link
+                    </a>
+                    <a
+                      className="secondary-link"
+                      href={item.original_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open original URL
+                    </a>
+                  </div>
 
                   <dl className="dashboard-meta">
                     <div>
@@ -131,7 +149,7 @@ export default async function LinksPage({ searchParams }: LinksPageProps) {
     );
   } catch (error) {
     const message =
-      error instanceof ShortenerApiError
+      error instanceof ApiError
         ? error.message
         : "The links dashboard is temporarily unavailable. Try again shortly.";
 

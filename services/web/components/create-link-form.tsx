@@ -97,6 +97,24 @@ export function CreateLinkForm() {
                   {copied ? "Copied" : "Copy URL"}
                 </button>
               </div>
+              <div className="link-action-row">
+                <a
+                  className="secondary-link"
+                  href={currentState.createdLink.short_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open short link
+                </a>
+                <a
+                  className="secondary-link"
+                  href={currentState.createdLink.original_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open original URL
+                </a>
+              </div>
               <dl className="result-meta">
                 <div>
                   <dt>Short code</dt>

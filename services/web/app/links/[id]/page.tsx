@@ -2,7 +2,12 @@ import Link from "next/link";
 
 import { deleteLinkAction, disableLinkAction, enableLinkAction } from "./actions";
 import { getLinkStatus } from "@/lib/link-state";
-import { getLinkById, ShortenerApiError } from "@/lib/shortener-api";
+import {
+  ApiError,
+  getLinkById,
+  getLinkStats,
+  type LinkStatsResponse,
+} from "@/lib/shortener-api";
 
 type LinkDetailsPageProps = {
   params: Promise<{ id: string }>;
@@ -39,6 +44,16 @@ export default async function LinkDetailsPage({ params, searchParams }: LinkDeta
 
   try {
     const link = await getLinkById(routeParams.id);
+    let stats: LinkStatsResponse | null = null;
+    let statsError: string | null = null;
+    try {
+      stats = await getLinkStats(routeParams.id);
+    } catch (statsErr) {
+      statsError =
+        statsErr instanceof ApiError
+          ? statsErr.message
+          : "Stats are temporarily unavailable.";
+    }
     const status = getLinkStatus(link);
 
     return (
@@ -98,6 +113,19 @@ export default async function LinkDetailsPage({ params, searchParams }: LinkDeta
 
               <div className="short-url-box compact">
                 <code>{link.short_url}</code>
+              </div>
+              <div className="link-action-row">
+                <a className="secondary-link" href={link.short_url} target="_blank" rel="noreferrer">
+                  Open short link
+                </a>
+                <a
+                  className="secondary-link"
+                  href={link.original_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open original URL
+                </a>
               </div>
 
               <dl className="dashboard-meta">
@@ -172,12 +200,87 @@ export default async function LinkDetailsPage({ params, searchParams }: LinkDeta
               </div>
             </aside>
           </div>
+
+          <section className="stats-panel">
+            <div className="details-card">
+              <div className="dashboard-card-head">
+                <div>
+                  <p className="eyebrow muted">E06</p>
+                  <h2>Analytics snapshot</h2>
+                </div>
+                <span className="status-chip muted">Eventually consistent</span>
+              </div>
+
+              {statsError ? (
+                <p className="result-placeholder">{statsError}</p>
+              ) : (
+                <>
+                  <dl className="dashboard-meta stats-meta">
+                    <div>
+                      <dt>Total clicks</dt>
+                      <dd>{stats?.total_clicks ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Last visited</dt>
+                      <dd>{formatDate(stats?.last_visited_at)}</dd>
+                    </div>
+                    <div>
+                      <dt>Hourly buckets</dt>
+                      <dd>{stats?.hourly.length ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Top referrers</dt>
+                      <dd>{stats?.top_referrers.length ?? 0}</dd>
+                    </div>
+                  </dl>
+
+                  <div className="stats-grid">
+                    <section className="stats-card">
+                      <h3>Last 24 hours</h3>
+                      {stats && stats.hourly.length > 0 ? (
+                        <ul className="stats-list">
+                          {stats.hourly.map((bucket) => (
+                            <li key={bucket.bucket_start}>
+                              <span>{formatDate(bucket.bucket_start)}</span>
+                              <strong>{bucket.clicks}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="result-placeholder">
+                          No click buckets yet. Refresh after redirects land in analytics.
+                        </p>
+                      )}
+                    </section>
+
+                    <section className="stats-card">
+                      <h3>Top referrers</h3>
+                      {stats && stats.top_referrers.length > 0 ? (
+                        <ul className="stats-list">
+                          {stats.top_referrers.map((ref) => (
+                            <li key={ref.referer}>
+                              <span>{ref.referer}</span>
+                              <strong>{ref.clicks}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="result-placeholder">
+                          No referrer data yet. Direct visits or empty analytics will show here.
+                        </p>
+                      )}
+                    </section>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
         </section>
       </main>
     );
   } catch (err) {
     const message =
-      err instanceof ShortenerApiError ? err.message : "Failed to load link details.";
+      err instanceof ApiError ? err.message : "Failed to load link details.";
 
     return (
       <main className="page-shell">

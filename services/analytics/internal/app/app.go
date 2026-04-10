@@ -9,20 +9,28 @@ import (
 	"syscall"
 	"time"
 
+	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	platformclickhouse "sandbox_url_shortener/internal/platform/clickhouse"
 	"sandbox_url_shortener/internal/platform/health"
 	"sandbox_url_shortener/internal/platform/logger"
 	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/internal/platform/middleware"
 	"sandbox_url_shortener/services/analytics/internal/config"
+	clickhouserepo "sandbox_url_shortener/services/analytics/internal/repository/clickhouse"
+	"sandbox_url_shortener/services/analytics/internal/service"
+	statshandler "sandbox_url_shortener/services/analytics/internal/transport/http/stdlib/stats"
 )
 
 // App is the composition root for the analytics binary.
 type App struct {
-	cfg       *config.Config
-	log       *slog.Logger
-	srv       *http.Server
-	closers   []func() error
-	consumers []Consumer
+	cfg        *config.Config
+	log        *slog.Logger
+	srv        *http.Server
+	clickhouse chdriver.Conn
+	stats      *statshandler.Handler
+	closers    []func() error
+	consumers  []Consumer
 }
 
 // NewApp initializes all dependencies and returns a ready-to-run analytics App.
@@ -33,6 +41,10 @@ func NewApp(ctx context.Context) (*App, error) {
 		return nil, fmt.Errorf("init config: %w", err)
 	}
 	a.initLogger()
+	if err := a.initClickHouse(ctx); err != nil {
+		return nil, fmt.Errorf("init clickhouse: %w", err)
+	}
+	a.initStats()
 	if err := a.initConsumers(ctx); err != nil {
 		return nil, fmt.Errorf("init consumers: %w", err)
 	}
@@ -92,7 +104,8 @@ func (a *App) initLogger() {
 }
 
 func (a *App) initConsumers(ctx context.Context) error {
-	linkVisited, err := newLinkVisitedConsumer(ctx, a.cfg, a.log)
+	sink := clickhouserepo.NewLinkVisitSink(a.clickhouse)
+	linkVisited, err := newLinkVisitedConsumerWithSink(ctx, a.cfg, a.log, sink)
 	if err != nil {
 		return err
 	}
@@ -101,6 +114,32 @@ func (a *App) initConsumers(ctx context.Context) error {
 		a.addCloser(linkVisited.Close)
 	}
 	return nil
+}
+
+func (a *App) initClickHouse(ctx context.Context) error {
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	conn, err := platformclickhouse.Open(
+		checkCtx,
+		a.cfg.ClickHouseAddr,
+		a.cfg.ClickHouseDatabase,
+		a.cfg.ClickHouseUsername,
+		a.cfg.ClickHousePassword,
+	)
+	if err != nil {
+		return err
+	}
+
+	a.clickhouse = conn
+	a.addCloser(conn.Close)
+	return nil
+}
+
+func (a *App) initStats() {
+	repo := clickhouserepo.NewLinkStatsRepo(a.clickhouse)
+	svc := service.NewLinkStatsService(repo, a.log)
+	a.stats = statshandler.NewHandler(svc, a.log)
 }
 
 func (a *App) startConsumers(ctx context.Context) {
@@ -114,6 +153,7 @@ func (a *App) initHTTPServer() {
 	mux.Handle("GET /health/live", health.LiveHandler())
 	mux.Handle("GET /health/ready", health.ReadyHandler(a.consumersReady))
 	mux.Handle("GET /metrics", metrics.Handler())
+	a.stats.Register(mux)
 
 	handler := middleware.Compose(mux,
 		middleware.Recovery(a.log),
@@ -136,6 +176,11 @@ func (a *App) addCloser(fn func() error) {
 }
 
 func (a *App) consumersReady(ctx context.Context) error {
+	if a.clickhouse != nil {
+		if err := a.clickhouse.Ping(ctx); err != nil {
+			return fmt.Errorf("clickhouse not ready: %w", err)
+		}
+	}
 	for _, consumer := range a.consumers {
 		if err := consumer.Ready(ctx); err != nil {
 			return fmt.Errorf("%s consumer not ready: %w", consumer.Name(), err)

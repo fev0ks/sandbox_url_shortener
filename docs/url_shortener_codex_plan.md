@@ -111,9 +111,10 @@
 
 ### 6.1. Компоненты системы
 
-- **shortener-service** — основной user-facing сервис: HTTP API, redirect handler, UI endpoints,
+- **shortener-service** — основной user-facing API: HTTP API, redirect handler, lifecycle endpoints,
   health/metrics
-- **analytics** — Kafka consumer для обработки событий и записи аналитики
+- **analytics** — Kafka consumer для обработки событий, записи аналитики и stats API
+- **web** — browser-facing frontend service, который композиционно использует shortener и analytics API
 - **PostgreSQL** — источник истины для ссылок и служебных сущностей
 - **Redis** — кеш, rate limiting, idempotency
 - **Kafka** — транспорт событий
@@ -136,6 +137,9 @@ client → shortener-service → Redis → PostgreSQL fallback → HTTP redirect
 
 #### Analytics
 Kafka → analytics → ClickHouse
+
+#### Stats read
+browser → web → analytics → ClickHouse
 
 #### Logs
 applications → log shipper → Elasticsearch → Kibana
@@ -178,16 +182,17 @@ shortener/
 │       └── internal/
 │           ├── app/
 │           └── config/
+│   └── web/
+│       ├── app/
+│       ├── components/
+│       ├── lib/
+│       └── Dockerfile
 ├── internal/
 │   └── platform/
 │   │   ├── health/
 │   │   ├── logger/
 │   │   ├── metrics/
 │   │   └── middleware/
-├── web/
-│   ├── templates/
-│   ├── static/
-│   └── assets/
 ├── deploy/
 │   ├── docker-compose/
 │   ├── helm/
@@ -259,7 +264,7 @@ shortener/
 - `PATCH /api/v1/links/{id}/disable` — отключить ссылку
 - `PATCH /api/v1/links/{id}/enable` — включить ссылку
 - `DELETE /api/v1/links/{id}` — удалить ссылку
-- `GET /api/v1/stats/{shortCode}` — базовая аналитика после появления ClickHouse
+- `GET /api/v1/links/{id}/stats` — analytics endpoint для базовой аналитики после появления ClickHouse
 
 ### 9.2. Минимальный UI
 
@@ -290,8 +295,8 @@ shortener/
 ### 9.3. Требования к UI
 
 - интерфейс должен быть простым и чистым
-- не нужен тяжелый SPA на первом этапе
-- допустим server-rendered UI или минимальный frontend
+- UI живет в отдельном frontend service
+- backend UI не должен встраиваться в Go-сервис шаблонами
 - UI должен быть usable без Postman
 
 ---

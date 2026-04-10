@@ -8,6 +8,7 @@ import (
 
 	"github.com/sethvargo/go-envconfig"
 
+	platformclickhouse "sandbox_url_shortener/internal/platform/clickhouse"
 	"sandbox_url_shortener/internal/platform/eventing"
 )
 
@@ -22,6 +23,11 @@ type Config struct {
 	KafkaTopicLinkVisitedDLQ string `env:"KAFKA_TOPIC_LINK_VISITED_DLQ"`
 	KafkaConsumerGroup       string `env:"KAFKA_CONSUMER_GROUP"`
 	KafkaConsumerEnabled     bool   `env:"KAFKA_CONSUMER_ENABLED,default=false"`
+
+	ClickHouseAddr     string `env:"CLICKHOUSE_ADDR"`
+	ClickHouseDatabase string `env:"CLICKHOUSE_DATABASE"`
+	ClickHouseUsername string `env:"CLICKHOUSE_USERNAME"`
+	ClickHousePassword string `env:"CLICKHOUSE_PASSWORD"`
 }
 
 // Load reads configuration from environment variables via go-envconfig and validates it.
@@ -50,6 +56,15 @@ func (c *Config) applyDefaults() {
 	if c.KafkaConsumerGroup == "" {
 		c.KafkaConsumerGroup = eventing.DefaultAnalyticsConsumerGroup
 	}
+	if c.ClickHouseAddr == "" {
+		c.ClickHouseAddr = platformclickhouse.DefaultAddr
+	}
+	if c.ClickHouseDatabase == "" {
+		c.ClickHouseDatabase = platformclickhouse.DefaultDatabase
+	}
+	if c.ClickHouseUsername == "" {
+		c.ClickHouseUsername = platformclickhouse.DefaultUsername
+	}
 }
 
 // Validate checks cross-field semantic rules that go beyond struct tags.
@@ -71,6 +86,15 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.KafkaConsumerGroup) == "" {
 		return fmt.Errorf("KAFKA_CONSUMER_GROUP must not be empty")
+	}
+	if strings.TrimSpace(c.ClickHouseAddr) == "" {
+		return fmt.Errorf("CLICKHOUSE_ADDR must not be empty")
+	}
+	if strings.TrimSpace(c.ClickHouseDatabase) == "" {
+		return fmt.Errorf("CLICKHOUSE_DATABASE must not be empty")
+	}
+	if strings.TrimSpace(c.ClickHouseUsername) == "" {
+		return fmt.Errorf("CLICKHOUSE_USERNAME must not be empty")
 	}
 	return nil
 }

@@ -63,6 +63,22 @@ services:
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic link.visited.v1.dlq --partitions 1 --replication-factor 1
     restart: "no"
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: analytics
+    volumes:
+      - ../../services/analytics/migrations/clickhouse/init:/docker-entrypoint-initdb.d
+      - ../../services/analytics/env/clickhouse/users.d/local-dev-default-user.xml:/etc/clickhouse-server/users.d/local-dev-default-user.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   shortener:
     build:
       context: ../..
@@ -75,6 +91,7 @@ services:
       DB_DSN: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
       REDIS_ADDR: redis:6379
       KAFKA_BROKERS: kafka:9092
+      KAFKA_PRODUCER_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,8 +111,11 @@ services:
       - ../../.env
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://shortener:8080
+      ANALYTICS_API_BASE_URL: http://analytics:9090
     depends_on:
       shortener:
+        condition: service_healthy
+      analytics:
         condition: service_healthy
 
   analytics:
@@ -110,11 +130,14 @@ services:
       ANALYTICS_ADMIN_PORT: "9090"
       KAFKA_BROKERS: kafka:9092
       KAFKA_CONSUMER_ENABLED: "true"
+      CLICKHOUSE_ADDR: clickhouse:9000
     depends_on:
       kafka:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/health/ready"]
       interval: 5s

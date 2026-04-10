@@ -139,7 +139,7 @@ flowchart LR
     k8s_shortener --> pg
     k8s_shortener --> redis
     k8s_shortener --> kafka
-    k8s_shortener -.->|stats reads| ch
+    k8s_web -.->|stats reads| k8s_analytics
     kafka --> k8s_analytics
     k8s_analytics --> ch
     k8s_shortener --> shipper
@@ -183,7 +183,7 @@ flowchart TB
     shortener --> pg
     shortener --> redis
     shortener --> kafka
-    shortener -.->|stats reads| ch
+    web -.->|stats reads| analytics
     kafka --> analytics
     analytics --> ch
 
@@ -206,9 +206,9 @@ The main API service is `shortener-service`. Its current baseline binary is
 `services/shortener/cmd/shortener`, and it is implemented as a modular monolith with explicit
 layers:
 
-- transport: HTTP router, handlers, middleware, UI handlers
-- service: link lifecycle, redirect orchestration, stats read model
-- repository: PostgreSQL, Redis, Kafka producer, future ClickHouse read adapters
+- transport: HTTP router, handlers, middleware
+- service: link lifecycle and redirect orchestration
+- repository: PostgreSQL, Redis, Kafka producer
 - platform: config, logger, metrics, health, shutdown wiring
 
 Expected request flow:
@@ -226,7 +226,7 @@ Constraints:
 ### `web`
 
 The browser-facing frontend lives in `services/web` as a separate runtime. It should consume the
-shortener API rather than embedding HTML templates into the Go service.
+shortener and analytics HTTP APIs rather than embedding HTML templates into the Go service.
 
 Constraints:
 
@@ -234,6 +234,8 @@ Constraints:
 - backend contracts stay explicit; missing frontend-facing API needs should be added deliberately
 - the frontend runtime must not bypass the shortener service and talk directly to databases or
   Redis
+- analytics reads for stats belong to the analytics service; the frontend may compose shortener
+  metadata and analytics stats server-side
 
 ### `analytics`
 
@@ -241,7 +243,7 @@ The `analytics` binary is intentionally narrow:
 
 - consume Kafka messages
 - validate and deserialize event payloads
-- hand validated events to a sink boundary
+- persist raw events and serve basic stats queries
 - emit logs and metrics for consumer health
 
 Current bootstrap behavior in `E05` is deliberately thin:
@@ -249,7 +251,7 @@ Current bootstrap behavior in `E05` is deliberately thin:
 - Kafka consumer runtime lives in `services/analytics/internal/app`
 - invalid payloads are handled explicitly at the consumer boundary
 - sink failures use bounded retry and are forwarded to DLQ after retry budget is exhausted
-- the sink is a logging sink first; ClickHouse storage is added in `E06`
+- ClickHouse storage and stats HTTP exposure are added in `E06`
 - readiness reflects broker connectivity and consumer loop health once Kafka is enabled
 
 The analytics service must tolerate at-least-once delivery and avoid making redirect success
@@ -266,10 +268,10 @@ Both `shortener-service` and `analytics` expose `/health/live`, `/health/ready`,
 HTTP. The port layout:
 
 - `shortener-service`: single port for API, UI, health, and metrics (default `8080`)
-- `analytics`: dedicated admin port for health and metrics only (default `9090`)
+- `analytics`: dedicated admin port for health, metrics, and stats API (default `9090`)
 
-In Docker Compose, health checks use the `/health/live` endpoint. In Kubernetes, liveness and
-readiness probes target the same endpoints via `httpGet`.
+In Docker Compose, `shortener` uses `/health/live` and `analytics` uses `/health/ready`. In
+Kubernetes, liveness and readiness probes target the matching endpoints via `httpGet`.
 
 ## Storage And Platform Responsibilities
 
@@ -438,23 +440,24 @@ Outcome:
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant API
+    participant Browser
+    participant Web
+    participant Analytics
     participant CH as ClickHouse
-    participant PG as PostgreSQL
 
-    Client->>API: GET /api/v1/stats/{shortCode}
-    API->>PG: resolve link metadata
-    PG-->>API: link row
-    API->>CH: query aggregated click events
-    CH-->>API: stats result
-    API-->>Client: stats response
+    Browser->>Web: GET /links/{id}
+    Web->>Analytics: GET /api/v1/links/{id}/stats
+    Analytics->>CH: query aggregated click events
+    CH-->>Analytics: stats result
+    Analytics-->>Web: stats response
+    Web-->>Browser: details page with stats section
 ```
 
 Outcome:
 
-- stats queries read from ClickHouse for click aggregations and PostgreSQL for link metadata
-- `shortener-service` needs a ClickHouse read adapter in its repository layer
+- analytics owns the ClickHouse read model and stats API
+- shortener remains unaware of ClickHouse and continues to own link metadata only
+- web composes metadata from shortener and stats from analytics on the details page
 - stats availability is eventually consistent with the redirect event pipeline
 
 ### Observability
@@ -485,7 +488,8 @@ Outcome:
 
 ## API Response Conventions
 
-API endpoints under `/api/v1/` return JSON. UI endpoints return server-rendered HTML.
+API endpoints under `/api/v1/` return JSON. Browser-facing HTML is served by the separate `web`
+service, which composes backend responses server-side.
 
 Error responses use a consistent JSON shape:
 

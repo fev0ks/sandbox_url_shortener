@@ -86,10 +86,10 @@ Cache and max_clicks interaction:
 
 ### ClickHouse
 
-Use ClickHouse only for append-heavy analytics data:
+Use ClickHouse only for append-heavy analytics data owned by the `analytics` service:
 
 - raw click events written by the `analytics` service
-- aggregated stats queries for API and UI
+- aggregated stats queries exposed by the `analytics` HTTP API and consumed by `web`
 
 ClickHouse rules:
 
@@ -101,7 +101,7 @@ Initial table direction:
 
 - table: `click_events_raw`
 - partition: by month on `occurred_at`
-- order key: `(short_code, occurred_at, event_id)`
+- order key: `(link_id, occurred_at, event_id)`
 
 ## PostgreSQL Schema Strategy
 
