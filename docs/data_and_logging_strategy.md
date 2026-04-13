@@ -220,6 +220,17 @@ Why:
 
 Internal observability should still distinguish these cases through logs and metrics.
 
+## Logging Field Conventions
+
+Keep the searchable field set stable across `shortener` and `analytics`:
+
+- `operation`: stable machine-searchable action name such as `http_request`, `link_create`, `redirect_resolve`, `publish_link_visited`, `consumer_fetch`, `clickhouse_write`
+- `error_kind`: stable category for degraded or failing paths such as `not_found`, `rate_limited`, `publish_failed`, `invalid_payload`
+- identity fields keep the same names everywhere: `request_id`, `correlation_id`, `link_id`, `short_code`, `event_id`
+- transport fields keep the same names everywhere: `method`, `path`, `status_code`, `latency_ms`, `client_ip`
+
+Do not invent service-local aliases for the same concept. If a field is unavailable on a path, omit it instead of emitting placeholder values.
+
 ### Max Clicks Policy
 
 Defaults:
@@ -310,6 +321,13 @@ Why Fluent Bit:
 - fits Docker Compose and VM deploy shape
 - can enrich and forward JSON logs without requiring application changes
 
+Local Compose direction:
+
+- `shortener` and `analytics` keep writing JSON to stdout
+- Docker Compose routes those container logs through the Docker `fluentd` logging driver
+- the driver forwards to Fluent Bit over the local forward input on `localhost:24224`
+- Fluent Bit parses the `log` field as JSON and ships structured documents into Elasticsearch
+
 Indexing direction:
 
 - Elasticsearch index pattern: `shortener-logs-*`
@@ -333,7 +351,6 @@ HTTP request logs should additionally include:
 
 - `method`
 - `path`
-- `route`
 - `status_code`
 - `latency_ms`
 - `client_ip`
@@ -394,11 +411,13 @@ Kibana queries should support:
 
 - finding one request by `request_id`
 - finding all redirect failures for one `short_code`
-- finding Kafka publish degradation by `operation=publish_click_event`
-- finding analytics insert failures by `event_id`
+- finding Kafka publish degradation by `operation=publish_link_visited`
+- finding analytics consumer or insert failures by `event_id`, `operation`, or `error_kind`
 
 This is why `request_id`, `short_code`, `status_code`, `operation`, and `error_kind` are mandatory
 design fields, not optional nice-to-haves.
+
+Validated local query examples live in `docs/log_debugging_workflows.md`.
 
 ## Rollout Order
 

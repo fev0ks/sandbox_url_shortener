@@ -27,10 +27,10 @@ const createRateLimitNamespace = "ratelimit:create"
 
 // Handler holds the dependencies needed to serve the link CRUD API.
 type Handler struct {
-	svc           Service
-	log           *slog.Logger
-	baseURL       string
-	idempotency   IdempotencyStore  // optional response cache for Idempotency-Key
+	svc         Service
+	log         *slog.Logger
+	baseURL     string
+	idempotency IdempotencyStore   // optional response cache for Idempotency-Key
 	rateLimiter httppolicy.Limiter // optional per-IP limiter for fresh creates
 }
 
@@ -55,10 +55,10 @@ func NewHandler(
 	rateLimiter httppolicy.Limiter,
 ) *Handler {
 	return &Handler{
-		svc:           svc,
-		log:           log,
-		baseURL:       baseURL,
-		idempotency:   idempotency,
+		svc:         svc,
+		log:         log,
+		baseURL:     baseURL,
+		idempotency: idempotency,
 		rateLimiter: rateLimiter,
 	}
 }
@@ -88,6 +88,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 // createWithIdempotency wraps a fresh-create handler with the Stripe-style key flow.
 func (h *Handler) createWithIdempotency(w http.ResponseWriter, r *http.Request, key string, fresh http.Handler) {
 	if len(key) > maxIdempotencyKeyLen {
+		h.log.DebugContext(r.Context(), "idempotency key rejected",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "invalid_idempotency_key"),
+		)
 		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_idempotency_key",
 			"Idempotency-Key exceeds maximum length")
 		return
@@ -95,7 +99,11 @@ func (h *Handler) createWithIdempotency(w http.ResponseWriter, r *http.Request, 
 
 	body, err := readAllAndRestore(r)
 	if err != nil {
-		h.log.WarnContext(r.Context(), "failed to read body for idempotency", "error", err)
+		h.log.WarnContext(r.Context(), "failed to read body for idempotency",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "invalid_body"),
+			"error", err,
+		)
 		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_body", "failed to read request body")
 		return
 	}
@@ -106,9 +114,16 @@ func (h *Handler) createWithIdempotency(w http.ResponseWriter, r *http.Request, 
 	switch {
 	case err != nil:
 		h.log.WarnContext(r.Context(), "idempotency get failed; processing as fresh",
-			"error", err, "key", key)
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "idempotency_get_failed"),
+			"error", err,
+			"idempotency_key", key,
+		)
 	case rec != nil && rec.BodyHash == bodyHash:
-		h.log.InfoContext(r.Context(), "idempotency replay", "key", key)
+		h.log.InfoContext(r.Context(), "idempotency replay",
+			slog.String("operation", "link_create"),
+			"idempotency_key", key,
+		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(rec.StatusCode)
 		if _, err := w.Write(rec.ResponseBody); err != nil {
@@ -116,7 +131,11 @@ func (h *Handler) createWithIdempotency(w http.ResponseWriter, r *http.Request, 
 		}
 		return
 	case rec != nil && rec.BodyHash != bodyHash:
-		h.log.InfoContext(r.Context(), "idempotency conflict", "key", key)
+		h.log.InfoContext(r.Context(), "idempotency conflict",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "idempotency_conflict"),
+			"idempotency_key", key,
+		)
 		respond.Error(r.Context(), w, http.StatusConflict, "idempotency_conflict",
 			"Idempotency-Key reused with a different request body")
 		return
@@ -134,7 +153,12 @@ func (h *Handler) createWithIdempotency(w http.ResponseWriter, r *http.Request, 
 			ResponseBody: append(json.RawMessage(nil), buf.body.Bytes()...),
 		}
 		if err := h.idempotency.Set(r.Context(), storeKey, store, idempotencyTTL); err != nil {
-			h.log.WarnContext(r.Context(), "idempotency set failed", "error", err, "key", key)
+			h.log.WarnContext(r.Context(), "idempotency set failed",
+				slog.String("operation", "link_create"),
+				slog.String("error_kind", "idempotency_set_failed"),
+				"error", err,
+				"idempotency_key", key,
+			)
 		}
 	}
 	buf.flushTo(w)
@@ -150,10 +174,18 @@ func (h *Handler) createInner(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case err != nil:
 			h.log.WarnContext(r.Context(), "rate limit backend error; failing open",
-				"error", err, "key", key)
+				slog.String("operation", "link_create"),
+				slog.String("error_kind", "rate_limit_backend_failed"),
+				"error", err,
+				"rate_limit_key", key,
+			)
 		case !decision.Allowed:
 			h.log.InfoContext(r.Context(), "rate limit exceeded",
-				"key", key, "retry_after", decision.RetryAfter)
+				slog.String("operation", "link_create"),
+				slog.String("error_kind", "rate_limited"),
+				"rate_limit_key", key,
+				"retry_after", decision.RetryAfter,
+			)
 			httppolicy.WriteRateLimited(w, requestmeta.RequestID(r.Context()), decision.RetryAfter)
 			return
 		}
@@ -161,13 +193,19 @@ func (h *Handler) createInner(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.log.DebugContext(r.Context(), "create link request rejected: invalid json")
+		h.log.DebugContext(r.Context(), "create link request rejected: invalid json",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "invalid_json"),
+		)
 		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_json", "malformed JSON body")
 		return
 	}
 
 	if strings.TrimSpace(req.OriginalURL) == "" {
-		h.log.DebugContext(r.Context(), "create link request rejected: original_url missing")
+		h.log.DebugContext(r.Context(), "create link request rejected: original_url missing",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "validation_error"),
+		)
 		respond.Error(r.Context(), w, http.StatusBadRequest, "validation_error", "original_url is required")
 		return
 	}
@@ -182,6 +220,7 @@ func (h *Handler) createInner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.DebugContext(r.Context(), "create link request accepted",
+		slog.String("operation", "link_create"),
 		slog.Bool("has_title", req.Title != nil),
 		slog.Bool("has_expires_at", req.ExpiresAt != nil),
 		slog.Int64("max_clicks", input.MaxClicks),
@@ -189,12 +228,17 @@ func (h *Handler) createInner(w http.ResponseWriter, r *http.Request) {
 
 	link, err := h.svc.Create(r.Context(), input)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to create link", "error", err)
+		h.log.ErrorContext(r.Context(), "failed to create link",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "create_failed"),
+			"error", err,
+		)
 		respond.Error(r.Context(), w, http.StatusInternalServerError, "internal_error", "failed to create link")
 		return
 	}
 
 	h.log.InfoContext(r.Context(), "link created",
+		slog.String("operation", "link_create"),
 		slog.String("link_id", link.ID.String()),
 		slog.String("short_code", link.ShortCode),
 		slog.Int64("max_clicks", link.MaxClicks),
@@ -208,34 +252,58 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		h.log.DebugContext(r.Context(), "get link request rejected: invalid id", slog.String("id", idStr))
+		h.log.DebugContext(r.Context(), "get link request rejected: invalid id",
+			slog.String("operation", "link_get"),
+			slog.String("error_kind", "invalid_id"),
+			slog.String("id", idStr),
+		)
 		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_id", "id must be a valid UUID")
 		return
 	}
 
-	h.log.DebugContext(r.Context(), "fetching link by id", slog.String("link_id", id.String()))
+	h.log.DebugContext(r.Context(), "fetching link by id",
+		slog.String("operation", "link_get"),
+		slog.String("link_id", id.String()),
+	)
 	link, err := h.svc.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			h.log.InfoContext(r.Context(), "link not found", slog.String("link_id", id.String()))
+			h.log.InfoContext(r.Context(), "link not found",
+				slog.String("operation", "link_get"),
+				slog.String("error_kind", "not_found"),
+				slog.String("link_id", id.String()),
+			)
 			respond.Error(r.Context(), w, http.StatusNotFound, "not_found", "link not found")
 			return
 		}
-		h.log.ErrorContext(r.Context(), "failed to get link", "error", err, slog.String("link_id", id.String()))
+		h.log.ErrorContext(r.Context(), "failed to get link",
+			slog.String("operation", "link_get"),
+			slog.String("error_kind", "get_failed"),
+			"error", err,
+			slog.String("link_id", id.String()),
+		)
 		respond.Error(r.Context(), w, http.StatusInternalServerError, "internal_error", "failed to get link")
 		return
 	}
 
-	h.log.DebugContext(r.Context(), "link fetched", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
+	h.log.DebugContext(r.Context(), "link fetched",
+		slog.String("operation", "link_get"),
+		slog.String("link_id", link.ID.String()),
+		slog.String("short_code", link.ShortCode),
+	)
 	respond.JSON(w, http.StatusOK, toResponse(link, h.baseURL))
 }
 
 // ListRecent handles GET /api/v1/links.
 func (h *Handler) ListRecent(w http.ResponseWriter, r *http.Request) {
-	h.log.DebugContext(r.Context(), "listing recent links")
+	h.log.DebugContext(r.Context(), "listing recent links", slog.String("operation", "link_list_recent"))
 	links, err := h.svc.ListRecent(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to list recent links", "error", err)
+		h.log.ErrorContext(r.Context(), "failed to list recent links",
+			slog.String("operation", "link_list_recent"),
+			slog.String("error_kind", "list_failed"),
+			"error", err,
+		)
 		respond.Error(r.Context(), w, http.StatusInternalServerError, "internal_error", "failed to list links")
 		return
 	}
@@ -269,20 +337,34 @@ func (h *Handler) changeState(
 		return
 	}
 
-	h.log.DebugContext(r.Context(), action+" link", slog.String("link_id", id.String()))
+	operation := "link_" + action
+	h.log.DebugContext(r.Context(), action+" link",
+		slog.String("operation", operation),
+		slog.String("link_id", id.String()),
+	)
 	link, err := changeFn(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			h.log.InfoContext(r.Context(), action+" skipped: link not found", slog.String("link_id", id.String()))
+			h.log.InfoContext(r.Context(), action+" skipped: link not found",
+				slog.String("operation", operation),
+				slog.String("error_kind", "not_found"),
+				slog.String("link_id", id.String()),
+			)
 			respond.Error(r.Context(), w, http.StatusNotFound, "not_found", "link not found")
 			return
 		}
-		h.log.ErrorContext(r.Context(), "failed to "+action+" link", "error", err, slog.String("link_id", id.String()))
+		h.log.ErrorContext(r.Context(), "failed to "+action+" link",
+			slog.String("operation", operation),
+			slog.String("error_kind", action+"_failed"),
+			"error", err,
+			slog.String("link_id", id.String()),
+		)
 		respond.Error(r.Context(), w, http.StatusInternalServerError, "internal_error", "failed to "+action+" link")
 		return
 	}
 
 	h.log.InfoContext(r.Context(), "link "+action+"d",
+		slog.String("operation", operation),
 		slog.String("link_id", link.ID.String()),
 		slog.String("short_code", link.ShortCode),
 	)
@@ -296,20 +378,35 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.DebugContext(r.Context(), "deleting link", slog.String("link_id", id.String()))
+	h.log.DebugContext(r.Context(), "deleting link",
+		slog.String("operation", "link_delete"),
+		slog.String("link_id", id.String()),
+	)
 	err = h.svc.SoftDelete(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			h.log.InfoContext(r.Context(), "delete skipped: link not found", slog.String("link_id", id.String()))
+			h.log.InfoContext(r.Context(), "delete skipped: link not found",
+				slog.String("operation", "link_delete"),
+				slog.String("error_kind", "not_found"),
+				slog.String("link_id", id.String()),
+			)
 			respond.Error(r.Context(), w, http.StatusNotFound, "not_found", "link not found")
 			return
 		}
-		h.log.ErrorContext(r.Context(), "failed to delete link", "error", err, slog.String("link_id", id.String()))
+		h.log.ErrorContext(r.Context(), "failed to delete link",
+			slog.String("operation", "link_delete"),
+			slog.String("error_kind", "delete_failed"),
+			"error", err,
+			slog.String("link_id", id.String()),
+		)
 		respond.Error(r.Context(), w, http.StatusInternalServerError, "internal_error", "failed to delete link")
 		return
 	}
 
-	h.log.InfoContext(r.Context(), "link deleted", slog.String("link_id", id.String()))
+	h.log.InfoContext(r.Context(), "link deleted",
+		slog.String("operation", "link_delete"),
+		slog.String("link_id", id.String()),
+	)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -318,7 +415,10 @@ func (h *Handler) parseID(w http.ResponseWriter, r *http.Request) (uuid.UUID, er
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		h.log.DebugContext(r.Context(), "request rejected: invalid uuid", slog.String("id", idStr))
+		h.log.DebugContext(r.Context(), "request rejected: invalid uuid",
+			slog.String("error_kind", "invalid_id"),
+			slog.String("id", idStr),
+		)
 		respond.Error(r.Context(), w, http.StatusBadRequest, "invalid_id", "id must be a valid UUID")
 		return uuid.Nil, err
 	}

@@ -81,9 +81,12 @@ func (p *asyncLinkVisitPublisher) run() {
 		cancel()
 		if err != nil {
 			p.log.Warn("async link.visited publish failed",
+				"operation", "publish_link_visited",
+				"error_kind", "publish_failed",
 				"error", err,
 				"event_id", event.EventID,
 				"link_id", event.LinkID,
+				"short_code", event.ShortCode,
 			)
 		}
 	}

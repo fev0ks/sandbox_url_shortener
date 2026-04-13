@@ -40,6 +40,7 @@ func NewLinkService(repo domain.LinkRepository, cache domain.LinkCache, visitPub
 // Retries short code generation up to 5 times on collision.
 func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) (*domain.Link, error) {
 	s.log.DebugContext(ctx, "creating link",
+		slog.String("operation", "link_create"),
 		slog.Bool("has_title", input.Title != nil),
 		slog.Bool("has_expires_at", input.ExpiresAt != nil),
 		slog.Int64("max_clicks", input.MaxClicks),
@@ -68,6 +69,7 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 		}
 		link.ShortCode = code
 		s.log.DebugContext(ctx, "attempting link insert",
+			slog.String("operation", "link_create"),
 			slog.Int("attempt", attempt),
 			slog.String("short_code", code),
 		)
@@ -75,6 +77,7 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 		err = s.repo.Create(ctx, link)
 		if err == nil {
 			s.log.DebugContext(ctx, "link persisted",
+				slog.String("operation", "link_create"),
 				slog.String("link_id", link.ID.String()),
 				slog.String("short_code", link.ShortCode),
 			)
@@ -85,6 +88,8 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 		}
 
 		s.log.WarnContext(ctx, "short code collision, retrying",
+			slog.String("operation", "link_create"),
+			slog.String("error_kind", "short_code_collision"),
 			"attempt", attempt,
 			"short_code", code,
 		)
@@ -95,18 +100,28 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 
 // GetByID returns an active link by its internal ID.
 func (s *LinkService) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
-	s.log.DebugContext(ctx, "loading link by id", slog.String("link_id", id.String()))
+	s.log.DebugContext(ctx, "loading link by id",
+		slog.String("operation", "link_get"),
+		slog.String("link_id", id.String()),
+	)
 	link, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	s.log.DebugContext(ctx, "link loaded", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
+	s.log.DebugContext(ctx, "link loaded",
+		slog.String("operation", "link_get"),
+		slog.String("link_id", link.ID.String()),
+		slog.String("short_code", link.ShortCode),
+	)
 	return link, nil
 }
 
 // ListRecent returns the most recently created non-deleted links.
 func (s *LinkService) ListRecent(ctx context.Context) ([]*domain.Link, error) {
-	s.log.DebugContext(ctx, "listing recent links", slog.Int("limit", recentLinksLimit))
+	s.log.DebugContext(ctx, "listing recent links",
+		slog.String("operation", "link_list_recent"),
+		slog.Int("limit", recentLinksLimit),
+	)
 	links, err := s.repo.ListRecent(ctx, recentLinksLimit)
 	if err != nil {
 		return nil, fmt.Errorf("link service list recent: %w", err)
@@ -116,7 +131,10 @@ func (s *LinkService) ListRecent(ctx context.Context) ([]*domain.Link, error) {
 
 // Disable marks a link as disabled and invalidates any cached redirect entry.
 func (s *LinkService) Disable(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
-	s.log.DebugContext(ctx, "disabling link in service", slog.String("link_id", id.String()))
+	s.log.DebugContext(ctx, "disabling link in service",
+		slog.String("operation", "link_disable"),
+		slog.String("link_id", id.String()),
+	)
 	shortCode, err := s.repo.Disable(ctx, id)
 	if err != nil {
 		return nil, err
@@ -124,7 +142,11 @@ func (s *LinkService) Disable(ctx context.Context, id uuid.UUID) (*domain.Link, 
 	s.invalidate(ctx, shortCode, "disable")
 	link, err := s.repo.GetByID(ctx, id)
 	if err == nil {
-		s.log.DebugContext(ctx, "link disabled in service", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
+		s.log.DebugContext(ctx, "link disabled in service",
+			slog.String("operation", "link_disable"),
+			slog.String("link_id", link.ID.String()),
+			slog.String("short_code", link.ShortCode),
+		)
 	}
 	return link, err
 }
@@ -132,7 +154,10 @@ func (s *LinkService) Disable(ctx context.Context, id uuid.UUID) (*domain.Link, 
 // Enable re-enables a previously disabled link and invalidates any cached entry
 // so the next redirect re-warms the cache from PostgreSQL.
 func (s *LinkService) Enable(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
-	s.log.DebugContext(ctx, "enabling link in service", slog.String("link_id", id.String()))
+	s.log.DebugContext(ctx, "enabling link in service",
+		slog.String("operation", "link_enable"),
+		slog.String("link_id", id.String()),
+	)
 	shortCode, err := s.repo.Enable(ctx, id)
 	if err != nil {
 		return nil, err
@@ -140,14 +165,21 @@ func (s *LinkService) Enable(ctx context.Context, id uuid.UUID) (*domain.Link, e
 	s.invalidate(ctx, shortCode, "enable")
 	link, err := s.repo.GetByID(ctx, id)
 	if err == nil {
-		s.log.DebugContext(ctx, "link enabled in service", slog.String("link_id", link.ID.String()), slog.String("short_code", link.ShortCode))
+		s.log.DebugContext(ctx, "link enabled in service",
+			slog.String("operation", "link_enable"),
+			slog.String("link_id", link.ID.String()),
+			slog.String("short_code", link.ShortCode),
+		)
 	}
 	return link, err
 }
 
 // SoftDelete marks a link as deleted and invalidates any cached entry.
 func (s *LinkService) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	s.log.DebugContext(ctx, "soft deleting link in service", slog.String("link_id", id.String()))
+	s.log.DebugContext(ctx, "soft deleting link in service",
+		slog.String("operation", "link_delete"),
+		slog.String("link_id", id.String()),
+	)
 	shortCode, err := s.repo.SoftDelete(ctx, id)
 	if err != nil {
 		return err
@@ -164,7 +196,12 @@ func (s *LinkService) invalidate(ctx context.Context, shortCode, op string) {
 	}
 	if err := s.cache.Delete(ctx, shortCode); err != nil {
 		s.log.WarnContext(ctx, "cache invalidation failed",
-			"short_code", shortCode, "op", op, "error", err)
+			slog.String("operation", "cache_invalidate"),
+			slog.String("error_kind", "cache_delete_failed"),
+			"short_code", shortCode,
+			"cache_action", op,
+			"error", err,
+		)
 	}
 }
 
@@ -179,7 +216,10 @@ func (s *LinkService) invalidate(ctx context.Context, shortCode, op string) {
 //     repository, which atomically increments redirect_count, then warm the
 //     cache best-effort.
 func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Link, error) {
-	s.log.DebugContext(ctx, "resolving short code", slog.String("short_code", shortCode))
+	s.log.DebugContext(ctx, "resolving short code",
+		slog.String("operation", "redirect_resolve"),
+		slog.String("short_code", shortCode),
+	)
 
 	now := time.Now().UTC()
 	if link, ok, err := s.resolveFromCache(ctx, shortCode, now); err != nil {
@@ -198,6 +238,7 @@ func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Li
 	}
 
 	s.log.DebugContext(ctx, "short code resolved",
+		slog.String("operation", "redirect_resolve"),
 		slog.String("short_code", shortCode),
 		slog.String("link_id", link.ID.String()),
 		slog.Int64("redirect_count", link.RedirectCount),
@@ -213,7 +254,11 @@ func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, no
 	cached, err := s.cache.Get(ctx, shortCode)
 	if err != nil {
 		s.log.WarnContext(ctx, "link cache get failed; falling back to db",
-			"error", err, "short_code", shortCode)
+			slog.String("operation", "cache_get"),
+			slog.String("error_kind", "cache_get_failed"),
+			"error", err,
+			"short_code", shortCode,
+		)
 		return nil, false, nil
 	}
 	if cached == nil || cached.MaxClicks != 0 || isExpired(cached.ExpiresAt, now) {
@@ -223,7 +268,11 @@ func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, no
 	linkID, err := uuid.Parse(cached.LinkID)
 	if err != nil {
 		s.log.WarnContext(ctx, "cached link id invalid; falling back to db",
-			"error", err, "short_code", shortCode)
+			slog.String("operation", "cache_get"),
+			slog.String("error_kind", "invalid_cached_link_id"),
+			"error", err,
+			"short_code", shortCode,
+		)
 		return nil, false, nil
 	}
 
@@ -231,7 +280,10 @@ func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, no
 		return nil, false, err
 	}
 
-	s.log.DebugContext(ctx, "redirect served from cache after touch", slog.String("short_code", shortCode))
+	s.log.DebugContext(ctx, "redirect served from cache after touch",
+		slog.String("operation", "redirect_resolve"),
+		slog.String("short_code", shortCode),
+	)
 
 	return &domain.Link{
 		ID:          linkID,
@@ -271,12 +323,18 @@ func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string
 	})
 	if err != nil {
 		s.log.WarnContext(ctx, "link.visited build failed; skipping publish",
-			"error", err, "short_code", shortCode)
+			slog.String("operation", "publish_link_visited"),
+			slog.String("error_kind", "build_failed"),
+			"error", err,
+			"short_code", shortCode,
+		)
 		return link, nil
 	}
 
 	if err := s.visitPublisher.PublishLinkVisited(ctx, event); err != nil {
 		s.log.WarnContext(ctx, "link.visited publish failed",
+			slog.String("operation", "publish_link_visited"),
+			slog.String("error_kind", "publish_failed"),
 			"error", err,
 			"short_code", shortCode,
 			"link_id", link.ID.String(),
@@ -286,6 +344,7 @@ func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string
 	}
 
 	s.log.DebugContext(ctx, "link.visited published",
+		slog.String("operation", "publish_link_visited"),
 		slog.String("short_code", shortCode),
 		slog.String("link_id", link.ID.String()),
 		slog.String("event_id", event.EventID),
@@ -309,7 +368,11 @@ func (s *LinkService) warmCache(ctx context.Context, link *domain.Link, now time
 	}
 	if err := s.cache.Set(ctx, link.ShortCode, entry, ttl); err != nil {
 		s.log.WarnContext(ctx, "link cache set failed",
-			"error", err, "short_code", link.ShortCode)
+			slog.String("operation", "cache_set"),
+			slog.String("error_kind", "cache_set_failed"),
+			"error", err,
+			"short_code", link.ShortCode,
+		)
 	}
 }
 

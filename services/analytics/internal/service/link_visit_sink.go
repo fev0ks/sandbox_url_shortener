@@ -29,6 +29,7 @@ func (s *LoggingLinkVisitSink) HandleLinkVisited(ctx context.Context, event *eve
 	}
 
 	s.log.DebugContext(ctx, "analytics link.visited consumed",
+		"operation", "clickhouse_write",
 		"event_id", event.EventID,
 		"link_id", event.LinkID,
 		"short_code", event.ShortCode,

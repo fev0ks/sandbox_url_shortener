@@ -20,6 +20,8 @@ func Recovery(base *slog.Logger) Middleware {
 			defer func(ctx context.Context) {
 				if rec := recover(); rec != nil {
 					base.ErrorContext(ctx, "panic recovered",
+						"operation", "http_recovery",
+						"error_kind", "panic",
 						"panic", fmt.Sprintf("%v", rec),
 						"stack", string(debug.Stack()),
 					)

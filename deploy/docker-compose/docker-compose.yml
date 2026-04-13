@@ -79,6 +79,48 @@ services:
       timeout: 5s
       retries: 10
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5601/api/status >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  fluent-bit:
+    image: fluent/fluent-bit:3.1
+    ports:
+      - "24224:24224"
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
   shortener:
     build:
       context: ../..
@@ -95,6 +137,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      fluent-bit:
+        condition: service_started
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "localhost:24224"
+        fluentd-async: "true"
+        tag: "shortener.{{.Name}}"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health/live"]
       interval: 5s
@@ -138,6 +188,14 @@ services:
         condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
+      fluent-bit:
+        condition: service_started
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "localhost:24224"
+        fluentd-async: "true"
+        tag: "analytics.{{.Name}}"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/health/ready"]
       interval: 5s
@@ -160,3 +218,4 @@ services:
 
 volumes:
   pg_data:
+  es_data:

@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"sandbox_url_shortener/internal/platform/httppolicy"
 )
 
 // defaultLogSkipPaths are noisy infra endpoints we don't want in access logs.
@@ -50,11 +52,13 @@ func LoggingWithSkip(base *slog.Logger, skip map[string]struct{}) func(http.Hand
 			}
 
 			base.InfoContext(ctx, "request",
+				slog.String("operation", "http_request"),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status_code", sw.code),
 				slog.Float64("latency_ms", float64(time.Since(start).Microseconds())/1000.0),
-				slog.String("client_ip", r.RemoteAddr),
+				slog.String("client_ip", httppolicy.ClientIP(r)),
+				slog.String("user_agent", r.UserAgent()),
 			)
 		})
 	}

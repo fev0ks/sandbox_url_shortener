@@ -1,5 +1,7 @@
 # E07 - Log Observability
 
+Status: complete
+
 ## Summary
 
 Observability epic focused on searchable centralized logs for troubleshooting request and event
@@ -34,3 +36,8 @@ requests, redirects, and failures.
 ## Open Questions
 
 - how much retention policy setup belongs to MVP versus deploy documentation
+
+## Completion Note
+
+Local log shipping, searchable field normalization, and validated debugging workflows are now in
+place for the MVP stack. Retention policy, ILM, and dashboards remain future observability work.

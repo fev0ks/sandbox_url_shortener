@@ -109,6 +109,7 @@ func (c *linkVisitedConsumer) Start(ctx context.Context) {
 		defer c.setStarted(false)
 
 		c.log.Info("analytics consumer starting",
+			"operation", "consumer_start",
 			"consumer", c.Name(),
 			"topic", c.cfg.KafkaTopicLinkVisited,
 			"group", c.cfg.KafkaConsumerGroup,
@@ -125,6 +126,8 @@ func (c *linkVisitedConsumer) Start(ctx context.Context) {
 				var invalidErr *kafkarepo.InvalidMessageError
 				if errors.As(err, &invalidErr) {
 					c.log.Warn("analytics invalid link.visited payload",
+						"operation", "consumer_fetch",
+						"error_kind", dlqReasonInvalidPayload,
 						"consumer", c.Name(),
 						"error", invalidErr.Err,
 						"topic", invalidErr.Message.Topic,
@@ -134,6 +137,8 @@ func (c *linkVisitedConsumer) Start(ctx context.Context) {
 					if handleErr := c.handleInvalidMessage(ctx, invalidErr); handleErr != nil {
 						c.setLoopError(handleErr)
 						c.log.Error("analytics invalid message handling failed",
+							"operation", "consumer_process",
+							"error_kind", "invalid_message_handling_failed",
 							"consumer", c.Name(),
 							"error", handleErr,
 						)
@@ -144,6 +149,8 @@ func (c *linkVisitedConsumer) Start(ctx context.Context) {
 
 				c.setLoopError(err)
 				c.log.Error("analytics consumer fetch failed",
+					"operation", "consumer_fetch",
+					"error_kind", "fetch_failed",
 					"consumer", c.Name(),
 					"error", err,
 				)
@@ -161,6 +168,8 @@ func (c *linkVisitedConsumer) Start(ctx context.Context) {
 			if err := c.processMessage(ctx, event, msg); err != nil {
 				c.setLoopError(err)
 				c.log.Error("analytics message processing failed",
+					"operation", "consumer_process",
+					"error_kind", "process_failed",
 					"consumer", c.Name(),
 					"error", err,
 				)
@@ -219,6 +228,8 @@ func (c *linkVisitedConsumer) processMessage(ctx context.Context, event *eventin
 		if err := c.sink.HandleLinkVisited(ctx, event); err != nil {
 			lastErr = err
 			c.log.Warn("analytics sink attempt failed",
+				"operation", "clickhouse_write",
+				"error_kind", dlqReasonSinkFailure,
 				"consumer", c.Name(),
 				"attempt", attempt,
 				"max_attempts", linkVisitedMaxAttempts,
@@ -279,6 +290,7 @@ func (c *linkVisitedConsumer) publishDLQ(ctx context.Context, msg segmentkafka.M
 	}
 
 	c.log.Warn("analytics message forwarded to DLQ",
+		"operation", "dlq_publish",
 		"consumer", c.Name(),
 		"reason", reason,
 		"attempts", attempts,

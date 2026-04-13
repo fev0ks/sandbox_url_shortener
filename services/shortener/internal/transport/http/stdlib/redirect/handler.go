@@ -41,7 +41,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // Redirect handles GET /{shortCode} — resolves the code and 302s to the original URL.
 func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 	shortCode := r.PathValue("shortCode")
-	h.log.DebugContext(r.Context(), "redirect requested", slog.String("short_code", shortCode))
+	h.log.DebugContext(r.Context(), "redirect requested",
+		slog.String("operation", "redirect_resolve"),
+		slog.String("short_code", shortCode),
+	)
 
 	link, err := h.svc.ResolveAndTrackVisit(r.Context(), shortCode, domain.VisitMetadata{
 		RequestID:  requestmeta.RequestID(r.Context()),
@@ -52,16 +55,30 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		h.log.InfoContext(r.Context(), "redirect target not found", slog.String("short_code", shortCode))
+		h.log.InfoContext(r.Context(), "redirect target not found",
+			slog.String("operation", "redirect_resolve"),
+			slog.String("error_kind", "not_found"),
+			slog.String("short_code", shortCode),
+		)
 		http.Error(w, "Not Found", http.StatusNotFound)
 	case errors.Is(err, domain.ErrLinkGone):
-		h.log.InfoContext(r.Context(), "redirect target gone", slog.String("short_code", shortCode))
+		h.log.InfoContext(r.Context(), "redirect target gone",
+			slog.String("operation", "redirect_resolve"),
+			slog.String("error_kind", "link_gone"),
+			slog.String("short_code", shortCode),
+		)
 		http.Error(w, "Gone", http.StatusGone)
 	case err != nil:
-		h.log.ErrorContext(r.Context(), "failed to resolve link", "error", err, "short_code", shortCode)
+		h.log.ErrorContext(r.Context(), "failed to resolve link",
+			slog.String("operation", "redirect_resolve"),
+			slog.String("error_kind", "resolve_failed"),
+			"error", err,
+			"short_code", shortCode,
+		)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	default:
 		h.log.DebugContext(r.Context(), "redirect resolved",
+			slog.String("operation", "redirect_resolve"),
 			slog.String("short_code", shortCode),
 			slog.String("link_id", link.ID.String()),
 		)
