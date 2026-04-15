@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"sandbox_url_shortener/internal/platform/logger"
+	"sandbox_url_shortener/internal/platform/telemetry"
 	"sandbox_url_shortener/services/shortener/internal/config"
 )
 
@@ -36,6 +37,9 @@ func NewApp(ctx context.Context) (*App, error) {
 		return nil, fmt.Errorf("init config: %w", err)
 	}
 	a.initLogger()
+	if err := a.initTelemetry(ctx); err != nil {
+		return nil, fmt.Errorf("init telemetry: %w", err)
+	}
 
 	if err := a.initDB(ctx); err != nil {
 		return nil, fmt.Errorf("init db: %w", err)
@@ -126,6 +130,21 @@ func (a *App) initConfig(ctx context.Context) error {
 
 func (a *App) initLogger() {
 	a.log = logger.New(a.cfg.LogLevel, "shortener", a.cfg.Env)
+}
+
+func (a *App) initTelemetry(ctx context.Context) error {
+	shutdown, err := telemetry.InitTracing(ctx, telemetry.Config{
+		ServiceName:  "shortener",
+		Environment:  a.cfg.Env,
+		OTLPEndpoint: a.cfg.OTLPEndpoint,
+	})
+	if err != nil {
+		return err
+	}
+	a.addCloser(func() error {
+		return shutdown(context.Background())
+	})
+	return nil
 }
 
 func (a *App) initDB(ctx context.Context) error {

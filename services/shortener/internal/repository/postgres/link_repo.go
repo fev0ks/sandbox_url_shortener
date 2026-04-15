@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/services/shortener/internal/domain"
 )
 
@@ -27,6 +29,12 @@ func NewLinkRepo(pool *pgxpool.Pool) *LinkRepo {
 // Create inserts a new link row. Returns domain.ErrShortCodeCollision on unique
 // violation of the short_code partial index.
 func (r *LinkRepo) Create(ctx context.Context, link *domain.Link) error {
+	start := time.Now()
+	result := pgResultSuccess
+	defer func() {
+		metrics.ObservePostgresOperation(shortenerService, pgOpLinkCreate, result, time.Since(start))
+	}()
+
 	const q = `
 		INSERT INTO links (
 			id, short_code, original_url, title, created_by,
@@ -45,9 +53,11 @@ func (r *LinkRepo) Create(ctx context.Context, link *domain.Link) error {
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if errors.As(err, &pgErr) && pgErr.Code == pgErrCodeUniqueViolation {
+			result = pgResultShortCodeCollision
 			return domain.ErrShortCodeCollision
 		}
+		result = pgResultError
 		return fmt.Errorf("link repo create: %w", err)
 	}
 	return nil
@@ -55,6 +65,12 @@ func (r *LinkRepo) Create(ctx context.Context, link *domain.Link) error {
 
 // ListRecent returns non-deleted links ordered by newest first.
 func (r *LinkRepo) ListRecent(ctx context.Context, limit int) ([]*domain.Link, error) {
+	start := time.Now()
+	result := pgResultSuccess
+	defer func() {
+		metrics.ObservePostgresOperation(shortenerService, pgOpLinkListRecent, result, time.Since(start))
+	}()
+
 	const q = `
 		SELECT id, short_code, original_url, title, created_by,
 		       created_at, updated_at, expires_at, max_clicks,
@@ -66,6 +82,7 @@ func (r *LinkRepo) ListRecent(ctx context.Context, limit int) ([]*domain.Link, e
 
 	rows, err := r.pool.Query(ctx, q, limit)
 	if err != nil {
+		result = pgResultError
 		return nil, fmt.Errorf("link repo list recent: %w", err)
 	}
 	defer rows.Close()
@@ -78,11 +95,13 @@ func (r *LinkRepo) ListRecent(ctx context.Context, limit int) ([]*domain.Link, e
 			&link.CreatedAt, &link.UpdatedAt, &link.ExpiresAt, &link.MaxClicks,
 			&link.RedirectCount, &link.DisabledAt, &link.DeletedAt, &link.LastAccessedAt,
 		); err != nil {
+			result = pgResultError
 			return nil, fmt.Errorf("link repo list recent scan: %w", err)
 		}
 		links = append(links, &link)
 	}
 	if err := rows.Err(); err != nil {
+		result = pgResultError
 		return nil, fmt.Errorf("link repo list recent rows: %w", err)
 	}
 
@@ -91,14 +110,15 @@ func (r *LinkRepo) ListRecent(ctx context.Context, limit int) ([]*domain.Link, e
 
 // GetByID returns an active (non-deleted) link by its internal UUID.
 func (r *LinkRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Link, error) {
-	const q = `
+	start := time.Now()
+	link, err := r.scanLink(r.pool.QueryRow(ctx, `
 		SELECT id, short_code, original_url, title, created_by,
 		       created_at, updated_at, expires_at, max_clicks,
 		       redirect_count, disabled_at, deleted_at, last_accessed_at
 		FROM links
-		WHERE id = $1 AND deleted_at IS NULL`
-
-	return r.scanLink(r.pool.QueryRow(ctx, q, id))
+		WHERE id = $1 AND deleted_at IS NULL`, id))
+	metrics.ObservePostgresOperation(shortenerService, pgOpLinkGetByID, postgresResult(err), time.Since(start))
+	return link, err
 }
 
 // Disable sets disabled_at = now() on an active link.
@@ -108,7 +128,7 @@ func (r *LinkRepo) Disable(ctx context.Context, id uuid.UUID) (string, error) {
 		SET disabled_at = now(), updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING short_code`
-	return r.execReturningShortCode(ctx, q, id)
+	return r.execReturningShortCode(ctx, pgOpLinkDisable, q, id)
 }
 
 // Enable clears disabled_at on an active link.
@@ -118,7 +138,7 @@ func (r *LinkRepo) Enable(ctx context.Context, id uuid.UUID) (string, error) {
 		SET disabled_at = NULL, updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING short_code`
-	return r.execReturningShortCode(ctx, q, id)
+	return r.execReturningShortCode(ctx, pgOpLinkEnable, q, id)
 }
 
 // SoftDelete sets deleted_at = now() on an active link.
@@ -128,14 +148,16 @@ func (r *LinkRepo) SoftDelete(ctx context.Context, id uuid.UUID) (string, error)
 		SET deleted_at = now(), updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING short_code`
-	return r.execReturningShortCode(ctx, q, id)
+	return r.execReturningShortCode(ctx, pgOpLinkSoftDelete, q, id)
 }
 
 // execReturningShortCode runs an UPDATE ... RETURNING short_code statement and
 // maps the no-rows case to domain.ErrNotFound.
-func (r *LinkRepo) execReturningShortCode(ctx context.Context, q string, id uuid.UUID) (string, error) {
+func (r *LinkRepo) execReturningShortCode(ctx context.Context, operation, q string, id uuid.UUID) (string, error) {
+	start := time.Now()
 	var shortCode string
 	err := r.pool.QueryRow(ctx, q, id).Scan(&shortCode)
+	metrics.ObservePostgresOperation(shortenerService, operation, postgresResult(err), time.Since(start))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", domain.ErrNotFound
 	}
@@ -149,6 +171,7 @@ func (r *LinkRepo) execReturningShortCode(ctx context.Context, q string, id uuid
 // if it is eligible for redirect. Falls back to a read-only query to distinguish
 // 404 from 410 when the update affects zero rows.
 func (r *LinkRepo) ResolveAndIncrement(ctx context.Context, shortCode string) (*domain.Link, error) {
+	start := time.Now()
 	const updateQ = `
 		UPDATE links
 		SET redirect_count = redirect_count + 1,
@@ -164,6 +187,7 @@ func (r *LinkRepo) ResolveAndIncrement(ctx context.Context, shortCode string) (*
 		          redirect_count, disabled_at, deleted_at, last_accessed_at`
 
 	link, err := r.scanLink(r.pool.QueryRow(ctx, updateQ, shortCode))
+	metrics.ObservePostgresOperation(shortenerService, pgOpLinkResolveAndIncrement, postgresResult(err), time.Since(start))
 	if err == nil {
 		return link, nil
 	}
@@ -179,6 +203,7 @@ func (r *LinkRepo) ResolveAndIncrement(ctx context.Context, shortCode string) (*
 // fetching the full row back to the application. This keeps PostgreSQL as the
 // authoritative redirect counter on cache hits while avoiding a read-back query.
 func (r *LinkRepo) TouchRedirect(ctx context.Context, shortCode string) error {
+	start := time.Now()
 	const q = `
 		UPDATE links
 		SET redirect_count = redirect_count + 1,
@@ -193,6 +218,7 @@ func (r *LinkRepo) TouchRedirect(ctx context.Context, shortCode string) error {
 
 	var touched int
 	err := r.pool.QueryRow(ctx, q, shortCode).Scan(&touched)
+	metrics.ObservePostgresOperation(shortenerService, pgOpLinkTouchRedirect, postgresResult(err), time.Since(start))
 	if err == nil {
 		return nil
 	}
@@ -206,6 +232,7 @@ func (r *LinkRepo) TouchRedirect(ctx context.Context, shortCode string) error {
 
 // classifyMiss performs a read-only lookup on a short code to distinguish 404 from 410.
 func (r *LinkRepo) classifyMiss(ctx context.Context, shortCode string) (*domain.Link, error) {
+	start := time.Now()
 	const q = `
 		SELECT deleted_at, disabled_at, expires_at, max_clicks, redirect_count
 		FROM links
@@ -217,6 +244,7 @@ func (r *LinkRepo) classifyMiss(ctx context.Context, shortCode string) (*domain.
 	err := r.pool.QueryRow(ctx, q, shortCode).Scan(
 		&l.DeletedAt, &l.DisabledAt, &l.ExpiresAt, &l.MaxClicks, &l.RedirectCount,
 	)
+	metrics.ObservePostgresOperation(shortenerService, pgOpLinkClassifyMiss, postgresResult(err), time.Since(start))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -248,4 +276,15 @@ func (r *LinkRepo) scanLink(row pgx.Row) (*domain.Link, error) {
 		return nil, fmt.Errorf("link repo scan: %w", err)
 	}
 	return &l, nil
+}
+
+func postgresResult(err error) string {
+	switch {
+	case err == nil:
+		return pgResultSuccess
+	case errors.Is(err, pgx.ErrNoRows), errors.Is(err, domain.ErrNotFound):
+		return pgResultNotFound
+	default:
+		return pgResultError
+	}
 }

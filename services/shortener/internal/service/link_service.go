@@ -9,8 +9,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"sandbox_url_shortener/internal/platform/eventing"
+	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/services/shortener/internal/domain"
 	"sandbox_url_shortener/services/shortener/internal/shortcode"
 )
@@ -39,6 +43,15 @@ func NewLinkService(repo domain.LinkRepository, cache domain.LinkCache, visitPub
 // Create generates a UUIDv7 and short code, then persists a new link.
 // Retries short code generation up to 5 times on collision.
 func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) (*domain.Link, error) {
+	ctx, span := otel.Tracer("shortener.service").Start(ctx, "shortener.link.create")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.Int64("link.max_clicks", input.MaxClicks),
+		attribute.Bool("link.has_title", input.Title != nil),
+		attribute.Bool("link.has_expires_at", input.ExpiresAt != nil),
+	)
+
 	s.log.DebugContext(ctx, "creating link",
 		slog.String("operation", "link_create"),
 		slog.Bool("has_title", input.Title != nil),
@@ -48,6 +61,9 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 
 	id, err := uuid.NewV7()
 	if err != nil {
+		metrics.ObserveLinkCreate("shortener", "uuid_failed")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "generate_uuid_failed")
 		return nil, fmt.Errorf("link service create: generate uuid: %w", err)
 	}
 
@@ -65,6 +81,9 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 	for attempt := 1; attempt <= maxCollisionRetries; attempt++ {
 		code, err := shortcode.Generate()
 		if err != nil {
+			metrics.ObserveLinkCreate("shortener", "shortcode_failed")
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "generate_short_code_failed")
 			return nil, fmt.Errorf("link service create: generate short code: %w", err)
 		}
 		link.ShortCode = code
@@ -76,14 +95,23 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 
 		err = s.repo.Create(ctx, link)
 		if err == nil {
+			metrics.ObserveLinkCreate("shortener", "success")
 			s.log.DebugContext(ctx, "link persisted",
 				slog.String("operation", "link_create"),
 				slog.String("link_id", link.ID.String()),
 				slog.String("short_code", link.ShortCode),
 			)
+			span.SetAttributes(
+				attribute.String("link.id", link.ID.String()),
+				attribute.String("link.short_code", link.ShortCode),
+			)
+			span.SetStatus(codes.Ok, "")
 			return link, nil
 		}
 		if !errors.Is(err, domain.ErrShortCodeCollision) {
+			metrics.ObserveLinkCreate("shortener", "repo_failed")
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "repo_create_failed")
 			return nil, fmt.Errorf("link service create: %w", err)
 		}
 
@@ -95,6 +123,8 @@ func (s *LinkService) Create(ctx context.Context, input domain.CreateLinkInput) 
 		)
 	}
 
+	metrics.ObserveLinkCreate("shortener", "collision_exhausted")
+	span.SetStatus(codes.Error, "collision_exhausted")
 	return nil, fmt.Errorf("link service create: exhausted %d collision retries", maxCollisionRetries)
 }
 
@@ -216,20 +246,40 @@ func (s *LinkService) invalidate(ctx context.Context, shortCode, op string) {
 //     repository, which atomically increments redirect_count, then warm the
 //     cache best-effort.
 func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Link, error) {
+	ctx, span := otel.Tracer("shortener.service").Start(ctx, "shortener.redirect.resolve")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("link.short_code", shortCode))
 	s.log.DebugContext(ctx, "resolving short code",
 		slog.String("operation", "redirect_resolve"),
 		slog.String("short_code", shortCode),
 	)
 
 	now := time.Now().UTC()
-	if link, ok, err := s.resolveFromCache(ctx, shortCode, now); err != nil {
+	if link, ok, cacheResult, err := s.resolveFromCache(ctx, shortCode, now); err != nil {
+		if cacheResult != "" {
+			span.SetAttributes(attribute.String("cache.result", cacheResult))
+			metrics.ObserveRedirectCache("shortener", cacheResult)
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "cache_touch_failed")
 		return nil, err
 	} else if ok {
+		if cacheResult != "" {
+			span.SetAttributes(attribute.String("cache.result", cacheResult))
+			metrics.ObserveRedirectCache("shortener", cacheResult)
+		}
+		span.SetStatus(codes.Ok, "")
 		return link, nil
+	} else if cacheResult != "" {
+		span.SetAttributes(attribute.String("cache.result", cacheResult))
+		metrics.ObserveRedirectCache("shortener", cacheResult)
 	}
 
 	link, err := s.repo.ResolveAndIncrement(ctx, shortCode)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "resolve_and_increment_failed")
 		return nil, err
 	}
 
@@ -243,12 +293,17 @@ func (s *LinkService) Resolve(ctx context.Context, shortCode string) (*domain.Li
 		slog.String("link_id", link.ID.String()),
 		slog.Int64("redirect_count", link.RedirectCount),
 	)
+	span.SetAttributes(
+		attribute.String("link.id", link.ID.String()),
+		attribute.Int64("link.redirect_count", link.RedirectCount),
+	)
+	span.SetStatus(codes.Ok, "")
 	return link, nil
 }
 
-func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, now time.Time) (*domain.Link, bool, error) {
+func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, now time.Time) (*domain.Link, bool, string, error) {
 	if s.cache == nil {
-		return nil, false, nil
+		return nil, false, "", nil
 	}
 
 	cached, err := s.cache.Get(ctx, shortCode)
@@ -259,10 +314,16 @@ func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, no
 			"error", err,
 			"short_code", shortCode,
 		)
-		return nil, false, nil
+		return nil, false, "error", nil
 	}
-	if cached == nil || cached.MaxClicks != 0 || isExpired(cached.ExpiresAt, now) {
-		return nil, false, nil
+	if cached == nil {
+		return nil, false, "miss", nil
+	}
+	if cached.MaxClicks != 0 {
+		return nil, false, "skip_capped", nil
+	}
+	if isExpired(cached.ExpiresAt, now) {
+		return nil, false, "skip_expired", nil
 	}
 
 	linkID, err := uuid.Parse(cached.LinkID)
@@ -273,11 +334,11 @@ func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, no
 			"error", err,
 			"short_code", shortCode,
 		)
-		return nil, false, nil
+		return nil, false, "invalid_entry", nil
 	}
 
 	if err := s.repo.TouchRedirect(ctx, shortCode); err != nil {
-		return nil, false, err
+		return nil, false, "touch_failed", err
 	}
 
 	s.log.DebugContext(ctx, "redirect served from cache after touch",
@@ -291,18 +352,26 @@ func (s *LinkService) resolveFromCache(ctx context.Context, shortCode string, no
 		OriginalURL: cached.OriginalURL,
 		MaxClicks:   cached.MaxClicks,
 		ExpiresAt:   cached.ExpiresAt,
-	}, true, nil
+	}, true, "hit", nil
 }
 
 // ResolveAndTrackVisit resolves a short code for redirect and then publishes a
 // best-effort link.visited event. Publish failures are logged and swallowed so
 // redirect correctness never depends on Kafka availability.
 func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string, visit domain.VisitMetadata) (*domain.Link, error) {
+	ctx, span := otel.Tracer("shortener.service").Start(ctx, "shortener.link.resolve_and_track_visit")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("link.short_code", shortCode))
+
 	link, err := s.Resolve(ctx, shortCode)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "resolve_failed")
 		return nil, err
 	}
 	if s.visitPublisher == nil {
+		span.SetStatus(codes.Ok, "")
 		return link, nil
 	}
 
@@ -322,6 +391,7 @@ func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string
 		Referer:    visit.Referer,
 	})
 	if err != nil {
+		metrics.ObserveLinkVisitPublish("shortener", "build_failed")
 		s.log.WarnContext(ctx, "link.visited build failed; skipping publish",
 			slog.String("operation", "publish_link_visited"),
 			slog.String("error_kind", "build_failed"),
@@ -332,6 +402,7 @@ func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string
 	}
 
 	if err := s.visitPublisher.PublishLinkVisited(ctx, event); err != nil {
+		metrics.ObserveLinkVisitPublish("shortener", "enqueue_failed")
 		s.log.WarnContext(ctx, "link.visited publish failed",
 			slog.String("operation", "publish_link_visited"),
 			slog.String("error_kind", "publish_failed"),
@@ -342,6 +413,7 @@ func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string
 		)
 		return link, nil
 	}
+	metrics.ObserveLinkVisitPublish("shortener", "enqueue_success")
 
 	s.log.DebugContext(ctx, "link.visited published",
 		slog.String("operation", "publish_link_visited"),
@@ -349,6 +421,11 @@ func (s *LinkService) ResolveAndTrackVisit(ctx context.Context, shortCode string
 		slog.String("link_id", link.ID.String()),
 		slog.String("event_id", event.EventID),
 	)
+	span.SetAttributes(
+		attribute.String("link.id", link.ID.String()),
+		attribute.String("event.id", event.EventID),
+	)
+	span.SetStatus(codes.Ok, "")
 
 	return link, nil
 }

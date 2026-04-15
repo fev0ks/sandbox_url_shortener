@@ -28,6 +28,7 @@ type Config struct {
 	KafkaTopicLinkVisited    string `env:"KAFKA_TOPIC_LINK_VISITED"`
 	KafkaTopicLinkVisitedDLQ string `env:"KAFKA_TOPIC_LINK_VISITED_DLQ"`
 	KafkaProducerEnabled     bool   `env:"KAFKA_PRODUCER_ENABLED,default=false"`
+	OTLPEndpoint             string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 }
 
 // Load reads configuration from environment variables via go-envconfig and validates it.

@@ -7,7 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"sandbox_url_shortener/internal/platform/eventing"
+	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/services/shortener/internal/service"
 )
 
@@ -24,17 +29,22 @@ type syncLinkVisitPublisher interface {
 type asyncLinkVisitPublisher struct {
 	log    *slog.Logger
 	base   syncLinkVisitPublisher
-	queue  chan *eventing.LinkVisited
+	queue  chan queuedLinkVisit
 	wg     sync.WaitGroup
 	once   sync.Once
 	stopCh chan struct{}
+}
+
+type queuedLinkVisit struct {
+	event       *eventing.LinkVisited
+	spanContext oteltrace.SpanContext
 }
 
 func newAsyncLinkVisitPublisher(log *slog.Logger, base syncLinkVisitPublisher) *asyncLinkVisitPublisher {
 	p := &asyncLinkVisitPublisher{
 		log:    log,
 		base:   base,
-		queue:  make(chan *eventing.LinkVisited, linkVisitPublishQueueSize),
+		queue:  make(chan queuedLinkVisit, linkVisitPublishQueueSize),
 		stopCh: make(chan struct{}),
 	}
 
@@ -44,7 +54,7 @@ func newAsyncLinkVisitPublisher(log *slog.Logger, base syncLinkVisitPublisher) *
 	return p
 }
 
-func (p *asyncLinkVisitPublisher) PublishLinkVisited(_ context.Context, event *eventing.LinkVisited) error {
+func (p *asyncLinkVisitPublisher) PublishLinkVisited(ctx context.Context, event *eventing.LinkVisited) error {
 	if event == nil {
 		return fmt.Errorf("link.visited event is nil")
 	}
@@ -52,7 +62,10 @@ func (p *asyncLinkVisitPublisher) PublishLinkVisited(_ context.Context, event *e
 	select {
 	case <-p.stopCh:
 		return fmt.Errorf("async link publisher is closed")
-	case p.queue <- event:
+	case p.queue <- queuedLinkVisit{
+		event:       event,
+		spanContext: oteltrace.SpanContextFromContext(ctx),
+	}:
 		return nil
 	default:
 		return fmt.Errorf("async link publisher queue is full")
@@ -75,19 +88,41 @@ func (p *asyncLinkVisitPublisher) Close() error {
 func (p *asyncLinkVisitPublisher) run() {
 	defer p.wg.Done()
 
-	for event := range p.queue {
-		publishCtx, cancel := context.WithTimeout(context.Background(), linkVisitPublishTimeout)
-		err := p.base.PublishLinkVisited(publishCtx, event)
+	tracer := otel.Tracer("shortener.async.publisher")
+
+	for item := range p.queue {
+		parentCtx := context.Background()
+		if item.spanContext.IsValid() {
+			parentCtx = oteltrace.ContextWithSpanContext(parentCtx, item.spanContext)
+		}
+
+		publishCtx, cancel := context.WithTimeout(parentCtx, linkVisitPublishTimeout)
+		publishCtx, span := tracer.Start(publishCtx, "shortener.link.visited.publish")
+		span.SetAttributes(
+			attribute.String("event.id", item.event.EventID),
+			attribute.String("link.id", item.event.LinkID),
+			attribute.String("link.short_code", item.event.ShortCode),
+		)
+
+		err := p.base.PublishLinkVisited(publishCtx, item.event)
 		cancel()
 		if err != nil {
+			metrics.ObserveLinkVisitPublish("shortener", "dispatch_failed")
 			p.log.Warn("async link.visited publish failed",
 				"operation", "publish_link_visited",
 				"error_kind", "publish_failed",
 				"error", err,
-				"event_id", event.EventID,
-				"link_id", event.LinkID,
-				"short_code", event.ShortCode,
+				"event_id", item.event.EventID,
+				"link_id", item.event.LinkID,
+				"short_code", item.event.ShortCode,
 			)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "publish_failed")
+			span.End()
+			continue
 		}
+		metrics.ObserveLinkVisitPublish("shortener", "dispatch_success")
+		span.SetStatus(codes.Ok, "")
+		span.End()
 	}
 }
