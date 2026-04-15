@@ -23,6 +23,7 @@ type Config struct {
 	KafkaTopicLinkVisitedDLQ string `env:"KAFKA_TOPIC_LINK_VISITED_DLQ"`
 	KafkaConsumerGroup       string `env:"KAFKA_CONSUMER_GROUP"`
 	KafkaConsumerEnabled     bool   `env:"KAFKA_CONSUMER_ENABLED,default=false"`
+	OTLPEndpoint             string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 
 	ClickHouseAddr     string `env:"CLICKHOUSE_ADDR"`
 	ClickHouseDatabase string `env:"CLICKHOUSE_DATABASE"`

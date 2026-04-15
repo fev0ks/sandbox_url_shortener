@@ -16,6 +16,7 @@ import (
 	"sandbox_url_shortener/internal/platform/logger"
 	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/internal/platform/middleware"
+	"sandbox_url_shortener/internal/platform/telemetry"
 	"sandbox_url_shortener/services/analytics/internal/config"
 	clickhouserepo "sandbox_url_shortener/services/analytics/internal/repository/clickhouse"
 	"sandbox_url_shortener/services/analytics/internal/service"
@@ -41,6 +42,9 @@ func NewApp(ctx context.Context) (*App, error) {
 		return nil, fmt.Errorf("init config: %w", err)
 	}
 	a.initLogger()
+	if err := a.initTelemetry(ctx); err != nil {
+		return nil, fmt.Errorf("init telemetry: %w", err)
+	}
 	if err := a.initClickHouse(ctx); err != nil {
 		return nil, fmt.Errorf("init clickhouse: %w", err)
 	}
@@ -103,6 +107,21 @@ func (a *App) initLogger() {
 	a.log = logger.New(a.cfg.LogLevel, "analytics", a.cfg.Env)
 }
 
+func (a *App) initTelemetry(ctx context.Context) error {
+	shutdown, err := telemetry.InitTracing(ctx, telemetry.Config{
+		ServiceName:  "analytics",
+		Environment:  a.cfg.Env,
+		OTLPEndpoint: a.cfg.OTLPEndpoint,
+	})
+	if err != nil {
+		return err
+	}
+	a.addCloser(func() error {
+		return shutdown(context.Background())
+	})
+	return nil
+}
+
 func (a *App) initConsumers(ctx context.Context) error {
 	sink := clickhouserepo.NewLinkVisitSink(a.clickhouse)
 	linkVisited, err := newLinkVisitedConsumerWithSink(ctx, a.cfg, a.log, sink)
@@ -159,6 +178,8 @@ func (a *App) initHTTPServer() {
 		middleware.Recovery(a.log),
 		middleware.RequestID,
 		middleware.CorrelationID,
+		telemetry.HTTPMiddleware("analytics"),
+		metrics.HTTPMiddleware("analytics"),
 		middleware.Logging(a.log),
 	)
 
