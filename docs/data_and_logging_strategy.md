@@ -418,6 +418,7 @@ This is why `request_id`, `short_code`, `status_code`, `operation`, and `error_k
 design fields, not optional nice-to-haves.
 
 Validated local query examples live in `docs/log_debugging_workflows.md`.
+Validated local metrics and tracing workflows live in `docs/metrics_and_tracing_workflows.md`.
 
 ## Rollout Order
 
@@ -427,4 +428,4 @@ Validated local query examples live in `docs/log_debugging_workflows.md`.
 - `E05`: propagate `request_id` into Kafka events
 - `E06`: add ClickHouse raw events storage
 - `E07`: add Fluent Bit, Elasticsearch, and Kibana wiring
-- `E08`: add Prometheus metrics collection and Grafana dashboards
+- `E08`: add Prometheus metrics collection, OpenTelemetry tracing, Tempo, and Grafana dashboards

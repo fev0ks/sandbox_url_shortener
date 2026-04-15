@@ -31,6 +31,7 @@ This design covers the MVP and the planned production-like stack:
 - ClickHouse
 - Elasticsearch and Kibana
 - Prometheus and Grafana
+- Tempo
 - Docker Compose as the primary local runtime
 - `kind + Helm` as the later local Kubernetes runtime
 - Minikube as an optional sandbox for Kubernetes learning
@@ -65,6 +66,7 @@ flowchart LR
             ch["ClickHouse"]
             prom["Prometheus"]
             grafana["Grafana"]
+            tempo["Tempo"]
             es["Elasticsearch"]
             kibana["Kibana"]
             shipper["Fluent Bit / Log Shipper"]
@@ -89,8 +91,11 @@ flowchart LR
     es --> kibana
     prom --> shortener
     prom --> analytics
+    shortener --> tempo
+    analytics --> tempo
     k6 --> prom
     prom --> grafana
+    tempo --> grafana
 ```
 
 ## Local Kubernetes Runtime
@@ -107,6 +112,7 @@ flowchart LR
         cli["Make / Local Automation"]
         prom["Prometheus"]
         grafana["Grafana"]
+        tempo["Tempo"]
         web["web"]
     end
 
@@ -151,6 +157,9 @@ flowchart LR
     prom --> k8s_shortener
     prom --> k8s_analytics
     prom --> grafana
+    k8s_shortener --> tempo
+    k8s_analytics --> tempo
+    tempo --> grafana
 ```
 
 ## Runtime View
@@ -177,6 +186,7 @@ flowchart TB
         kibana["Kibana"]
         prom["Prometheus"]
         grafana["Grafana"]
+        tempo["Tempo"]
     end
 
     web --> shortener
@@ -189,8 +199,11 @@ flowchart TB
 
     prom --> shortener
     prom --> analytics
+    shortener --> tempo
+    analytics --> tempo
     k6 --> prom
     prom --> grafana
+    tempo --> grafana
 
     shortener --> shipper
     analytics --> shipper
@@ -312,6 +325,12 @@ Kubernetes, liveness and readiness probes target the matching endpoints via `htt
 - collect technical and business metrics
 - provide dashboards for latency, errors, cache hit ratio, and event pipeline behavior
 - act as the main visualization surface during controlled load and stress tests
+
+### Tempo And OpenTelemetry
+
+- `shortener` and `analytics` emit traces via OTLP
+- Tempo stores traces locally and Grafana provides the main trace exploration UI
+- request and consumer traces should correlate HTTP, Kafka publish/consume, and ClickHouse work
 
 ### k6
 
