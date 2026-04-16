@@ -196,6 +196,8 @@ services:
       KAFKA_PRODUCER_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: tempo:4318
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       tempo:
@@ -271,7 +273,7 @@ services:
   migrate:
     image: migrate/migrate:v4.18.3
     volumes:
-      - ../../services/shortener/migrations/postgres:/migrations
+      - ../../services/shortener/migrations/postgres:/migrations:ro
     command:
       - "-path=/migrations"
       - "-database=postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable"
@@ -279,8 +281,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    profiles:
-      - tools
+    restart: "no"
 
 volumes:
   pg_data:

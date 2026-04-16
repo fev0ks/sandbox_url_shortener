@@ -3,6 +3,9 @@
 This project uses [golang-migrate](https://github.com/golang-migrate/migrate) to manage PostgreSQL
 schema changes. Migrations are explicit SQL files that run outside the application process.
 
+For the canonical local verify and deploy workflow, use
+[Local Delivery Workflows](local_delivery_workflows.md).
+
 ## Prerequisites
 
 Install the `migrate` CLI. Pick one method:
@@ -49,7 +52,13 @@ The six-digit prefix determines execution order. Use sequential numbering starti
 Start PostgreSQL first if it is not already running:
 
 ```bash
-make run   # or: docker compose -f deploy/docker-compose/docker-compose.yml up postgres -d
+task deploy   # canonical local deploy flow
+```
+
+or start only PostgreSQL if you are running migrations manually:
+
+```bash
+docker compose -f deploy/docker-compose/docker-compose.yml up postgres -d
 ```
 
 Apply all pending migrations:
@@ -68,14 +77,22 @@ migrate -path services/shortener/migrations/postgres \
 
 ### Local (Docker Compose)
 
-A one-shot `migrate` service is included in `docker-compose.yml`. It runs automatically when you
-bring the stack up, but you can also invoke it directly:
+A one-shot `migrate` service is included in `docker-compose.yml`.
+
+- `task deploy` (preferred) brings the stack up and triggers the `migrate` service before
+  `shortener` starts
+- `make run` uses the same compose flow when you want the lower-level helper
+
+You can also invoke the migration runner directly:
 
 ```bash
 docker compose -f deploy/docker-compose/docker-compose.yml run --rm migrate
 ```
 
 ### Rolling Back
+
+`migrate-down` is a local development recovery tool. Do not treat it as a production rollback
+strategy.
 
 Roll back the last migration:
 
@@ -174,6 +191,6 @@ These rules come from the project's [data and logging strategy](data_and_logging
 
 | Environment | How migrations run |
 |---|---|
-| Local dev | `make migrate-up` or docker-compose `migrate` service |
+| Local dev | `task deploy`, `make run`, or manual `make migrate-up` / docker-compose `migrate` |
 | CI | Run migrations before integration tests to validate schema |
 | Deploy | Run migrations before switching traffic to the new version |

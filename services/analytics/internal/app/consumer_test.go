@@ -32,8 +32,6 @@ func (f *fakeRepo) Close() error                { return nil }
 
 type fakeDLQ struct {
 	publishCalls int
-	lastReason   string
-	lastAttempts int
 }
 
 func (f *fakeDLQ) Publish(context.Context, segmentkafka.Message, string, string, int, error) error {

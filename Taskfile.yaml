@@ -7,6 +7,7 @@ vars:
   GOFUMPT_VERSION: 'v0.9.2'
 
   BIN_DIR: '{{.ROOT_DIR}}/bin'
+  COMPOSE_FILE: '{{.ROOT_DIR}}/deploy/docker-compose/docker-compose.yml'
   GOLANGCI_LINT: '{{.BIN_DIR}}/golangci-lint'
   GCI: '{{.BIN_DIR}}/gci'
   GOFUMPT: '{{.BIN_DIR}}/gofumpt'
@@ -84,6 +85,69 @@ tasks:
     cmds:
       - npm run build
 
+  verify-go:
+    desc: "Run the Go verification flow"
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  verify-web:
+    desc: "Run the web verification flow"
+    cmds:
+      - task: web-build
+
   verify:
-    desc: "Run lint, tests, and builds"
-    deps: [lint, test, build]
+    desc: "Run the canonical local verification flow"
+    cmds:
+      - task: verify-go
+      - task: verify-web
+
+  image-build:
+    desc: "Build the runtime images used by the local Docker Compose stack"
+    cmds:
+      - task: verify
+      - docker compose -f {{.COMPOSE_FILE}} build shortener analytics web
+
+  deploy:
+    desc: "Build images, run migrations, start the stack, and execute smoke checks"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} up --build -d
+      - task: smoke
+
+  smoke:
+    desc: "Run HTTP smoke checks against the local stack"
+    cmds:
+      - |
+        set -eu
+        web_port="${WEB_PORT:-3000}"
+        check_url() {
+          name="$1"
+          url="$2"
+          echo "Checking ${name} at ${url}"
+          attempt=1
+          while [ "$attempt" -le 30 ]; do
+            if curl -fsS "$url" >/dev/null; then
+              echo "${name} is ready"
+              return 0
+            fi
+            sleep 2
+            attempt=$((attempt + 1))
+          done
+          echo "${name} failed smoke check: ${url}" >&2
+          return 1
+        }
+
+        check_url shortener http://localhost:8080/health/ready
+        check_url analytics http://localhost:9090/health/ready
+        check_url web "http://localhost:${web_port}"
+
+  stop:
+    desc: "Stop and remove the local Docker Compose stack"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} down
+
+  reset:
+    desc: "Destroy the local Docker Compose stack and volumes"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} down -v --remove-orphans

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -52,7 +53,7 @@ type container struct {
 // It returns an error so future components that can fail at construction time
 // (Redis client, Kafka producer, ClickHouse pool, third-party SDKs, ...) can
 // surface that failure cleanly through NewApp instead of panicking.
-func newContainer(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, redisClient *goredis.Client) *container {
+func newContainer(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, redisClient *goredis.Client) *container {
 	c := &container{}
 
 	// Repositories.
@@ -66,7 +67,7 @@ func newContainer(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, redi
 	c.idempotencyStore = redisrepo.NewIdempotencyStore(redisClient)
 	if cfg.KafkaProducerEnabled {
 		basePublisher := kafkarepo.NewLinkVisitPublisher(splitBrokers(cfg.KafkaBrokers), cfg.KafkaTopicLinkVisited)
-		asyncPublisher := newAsyncLinkVisitPublisher(log, basePublisher)
+		asyncPublisher := newAsyncLinkVisitPublisher(ctx, log, basePublisher)
 		c.visitPublisher = asyncPublisher
 		c.visitCloser = asyncPublisher
 	}

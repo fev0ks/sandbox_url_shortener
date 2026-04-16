@@ -28,7 +28,7 @@ func TestAsyncLinkVisitPublisher_LogsStructuredFailureFields(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	publisher := newAsyncLinkVisitPublisher(logger, &stubSyncLinkVisitPublisher{
+	publisher := newAsyncLinkVisitPublisher(context.Background(), logger, &stubSyncLinkVisitPublisher{
 		err: errors.New("kafka unavailable"),
 	})
 

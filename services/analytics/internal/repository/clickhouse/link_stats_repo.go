@@ -96,7 +96,17 @@ func (r *LinkStatsRepo) loadHourly(ctx context.Context, stats *domain.LinkStats,
 		span.SetStatus(codes.Error, "query_failed")
 		return fmt.Errorf("clickhouse stats hourly query: %w", err)
 	}
-	defer rows.Close()
+	closeRowsOnReturn := true
+	defer func() {
+		if !closeRowsOnReturn {
+			return
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			metrics.ObserveClickHouseOperation("analytics", "stats_hourly", "failure", time.Since(start))
+			span.RecordError(closeErr)
+			span.SetStatus(codes.Error, "close_failed")
+		}
+	}()
 
 	for rows.Next() {
 		var bucket domain.LinkStatsBucket
@@ -114,6 +124,13 @@ func (r *LinkStatsRepo) loadHourly(ctx context.Context, stats *domain.LinkStats,
 		span.SetStatus(codes.Error, "rows_failed")
 		return fmt.Errorf("clickhouse stats hourly rows: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		metrics.ObserveClickHouseOperation("analytics", "stats_hourly", "failure", time.Since(start))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "close_failed")
+		return fmt.Errorf("clickhouse stats hourly close: %w", err)
+	}
+	closeRowsOnReturn = false
 
 	metrics.ObserveClickHouseOperation("analytics", "stats_hourly", "success", time.Since(start))
 	span.SetStatus(codes.Ok, "")
@@ -145,7 +162,17 @@ func (r *LinkStatsRepo) loadTopReferrers(ctx context.Context, stats *domain.Link
 		span.SetStatus(codes.Error, "query_failed")
 		return fmt.Errorf("clickhouse stats referrers query: %w", err)
 	}
-	defer rows.Close()
+	closeRowsOnReturn := true
+	defer func() {
+		if !closeRowsOnReturn {
+			return
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			metrics.ObserveClickHouseOperation("analytics", "stats_top_referrers", "failure", time.Since(start))
+			span.RecordError(closeErr)
+			span.SetStatus(codes.Error, "close_failed")
+		}
+	}()
 
 	for rows.Next() {
 		var ref domain.LinkReferrerStat
@@ -163,6 +190,13 @@ func (r *LinkStatsRepo) loadTopReferrers(ctx context.Context, stats *domain.Link
 		span.SetStatus(codes.Error, "rows_failed")
 		return fmt.Errorf("clickhouse stats referrers rows: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		metrics.ObserveClickHouseOperation("analytics", "stats_top_referrers", "failure", time.Since(start))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "close_failed")
+		return fmt.Errorf("clickhouse stats referrers close: %w", err)
+	}
+	closeRowsOnReturn = false
 
 	metrics.ObserveClickHouseOperation("analytics", "stats_top_referrers", "success", time.Since(start))
 	span.SetStatus(codes.Ok, "")

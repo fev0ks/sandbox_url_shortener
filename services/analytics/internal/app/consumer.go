@@ -64,10 +64,6 @@ type linkVisitedConsumer struct {
 	}
 }
 
-func newLinkVisitedConsumer(ctx context.Context, cfg *config.Config, log *slog.Logger) (*linkVisitedConsumer, error) {
-	return newLinkVisitedConsumerWithSink(ctx, cfg, log, service.NewLoggingLinkVisitSink(log))
-}
-
 func newLinkVisitedConsumerWithSink(ctx context.Context, cfg *config.Config, log *slog.Logger, sink service.LinkVisitSink) (*linkVisitedConsumer, error) {
 	if !cfg.KafkaConsumerEnabled {
 		return nil, nil

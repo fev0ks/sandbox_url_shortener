@@ -1,5 +1,7 @@
 # E09 - Delivery And Local Automation
 
+Status: complete
+
 ## Summary
 
 Delivery epic for making the project reproducible through local verification, build, and deployment

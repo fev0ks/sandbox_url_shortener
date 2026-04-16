@@ -18,7 +18,7 @@ test:
 lint:
 	go vet ./...
 
-## run: start the full Docker Compose stack
+## run: start the full Docker Compose stack (prefer task deploy for the canonical local workflow)
 run:
 	docker compose -f $(COMPOSE_FILE) up --build -d
 

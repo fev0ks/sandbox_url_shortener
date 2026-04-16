@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
+
 	"sandbox_url_shortener/internal/platform/eventing"
 	"sandbox_url_shortener/internal/platform/metrics"
 	"sandbox_url_shortener/services/shortener/internal/service"
@@ -40,7 +41,7 @@ type queuedLinkVisit struct {
 	spanContext oteltrace.SpanContext
 }
 
-func newAsyncLinkVisitPublisher(log *slog.Logger, base syncLinkVisitPublisher) *asyncLinkVisitPublisher {
+func newAsyncLinkVisitPublisher(ctx context.Context, log *slog.Logger, base syncLinkVisitPublisher) *asyncLinkVisitPublisher {
 	p := &asyncLinkVisitPublisher{
 		log:    log,
 		base:   base,
@@ -49,7 +50,7 @@ func newAsyncLinkVisitPublisher(log *slog.Logger, base syncLinkVisitPublisher) *
 	}
 
 	p.wg.Add(1)
-	go p.run()
+	go p.run(context.WithoutCancel(ctx))
 
 	return p
 }
@@ -85,13 +86,13 @@ func (p *asyncLinkVisitPublisher) Close() error {
 	return err
 }
 
-func (p *asyncLinkVisitPublisher) run() {
+func (p *asyncLinkVisitPublisher) run(baseCtx context.Context) {
 	defer p.wg.Done()
 
 	tracer := otel.Tracer("shortener.async.publisher")
 
 	for item := range p.queue {
-		parentCtx := context.Background()
+		parentCtx := baseCtx
 		if item.spanContext.IsValid() {
 			parentCtx = oteltrace.ContextWithSpanContext(parentCtx, item.spanContext)
 		}

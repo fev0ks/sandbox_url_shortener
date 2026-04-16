@@ -77,13 +77,13 @@ func (e *LinkVisited) Validate() error {
 		return fmt.Errorf("%w: version must be %q", ErrInvalidLinkVisited, LinkVisitedVersion)
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(e.EventID)); err != nil {
-		return fmt.Errorf("%w: invalid event_id: %v", ErrInvalidLinkVisited, err)
+		return errors.Join(ErrInvalidLinkVisited, fmt.Errorf("invalid event_id: %w", err))
 	}
 	if strings.TrimSpace(e.RequestID) == "" {
 		return fmt.Errorf("%w: request_id must not be empty", ErrInvalidLinkVisited)
 	}
 	if _, err := uuid.Parse(strings.TrimSpace(e.LinkID)); err != nil {
-		return fmt.Errorf("%w: invalid link_id: %v", ErrInvalidLinkVisited, err)
+		return errors.Join(ErrInvalidLinkVisited, fmt.Errorf("invalid link_id: %w", err))
 	}
 	if strings.TrimSpace(e.ShortCode) == "" {
 		return fmt.Errorf("%w: short_code must not be empty", ErrInvalidLinkVisited)

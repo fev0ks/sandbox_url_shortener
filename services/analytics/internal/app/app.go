@@ -116,8 +116,9 @@ func (a *App) initTelemetry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	shutdownCtx := context.WithoutCancel(ctx)
 	a.addCloser(func() error {
-		return shutdown(context.Background())
+		return shutdown(shutdownCtx)
 	})
 	return nil
 }

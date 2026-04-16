@@ -47,14 +47,14 @@ func NewApp(ctx context.Context) (*App, error) {
 	if err := a.initRedis(ctx); err != nil {
 		return nil, fmt.Errorf("init redis: %w", err)
 	}
-	a.initContainer()
+	a.initContainer(ctx)
 	a.initHTTPServer()
 
 	return a, nil
 }
 
-func (a *App) initContainer() {
-	a.di = newContainer(a.cfg, a.log, a.pool, a.redis)
+func (a *App) initContainer(ctx context.Context) {
+	a.di = newContainer(context.WithoutCancel(ctx), a.cfg, a.log, a.pool, a.redis)
 	if a.di.visitCloser != nil {
 		a.addCloser(a.di.visitCloser.Close)
 	}
@@ -141,8 +141,9 @@ func (a *App) initTelemetry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	shutdownCtx := context.WithoutCancel(ctx)
 	a.addCloser(func() error {
-		return shutdown(context.Background())
+		return shutdown(shutdownCtx)
 	})
 	return nil
 }
