@@ -77,8 +77,10 @@ func (p *asyncLinkVisitPublisher) Close() error {
 	var err error
 
 	p.once.Do(func() {
+		// Signal shutdown via stopCh only; do NOT close(p.queue) —
+		// sending on a closed channel panics, and concurrent PublishLinkVisited
+		// callers could hit that race.
 		close(p.stopCh)
-		close(p.queue)
 		p.wg.Wait()
 		err = p.base.Close()
 	})
@@ -86,44 +88,65 @@ func (p *asyncLinkVisitPublisher) Close() error {
 	return err
 }
 
+func (p *asyncLinkVisitPublisher) publish(baseCtx context.Context, tracer oteltrace.Tracer, item queuedLinkVisit) {
+	parentCtx := baseCtx
+	if item.spanContext.IsValid() {
+		parentCtx = oteltrace.ContextWithSpanContext(parentCtx, item.spanContext)
+	}
+
+	publishCtx, cancel := context.WithTimeout(parentCtx, linkVisitPublishTimeout)
+	publishCtx, span := tracer.Start(publishCtx, "shortener.link.visited.publish")
+	span.SetAttributes(
+		attribute.String("event.id", item.event.EventID),
+		attribute.String("link.id", item.event.LinkID),
+		attribute.String("link.short_code", item.event.ShortCode),
+	)
+
+	err := p.base.PublishLinkVisited(publishCtx, item.event)
+	cancel()
+	if err != nil {
+		metrics.ObserveLinkVisitPublish("shortener", "dispatch_failed")
+		p.log.Warn("async link.visited publish failed",
+			"operation", "publish_link_visited",
+			"error_kind", "publish_failed",
+			"error", err,
+			"event_id", item.event.EventID,
+			"link_id", item.event.LinkID,
+			"short_code", item.event.ShortCode,
+		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "publish_failed")
+		span.End()
+		return
+	}
+	metrics.ObserveLinkVisitPublish("shortener", "dispatch_success")
+	span.SetStatus(codes.Ok, "")
+	span.End()
+}
+
 func (p *asyncLinkVisitPublisher) run(baseCtx context.Context) {
 	defer p.wg.Done()
 
 	tracer := otel.Tracer("shortener.async.publisher")
 
-	for item := range p.queue {
-		parentCtx := baseCtx
-		if item.spanContext.IsValid() {
-			parentCtx = oteltrace.ContextWithSpanContext(parentCtx, item.spanContext)
+	for {
+		select {
+		case <-p.stopCh:
+			p.drain(baseCtx, tracer)
+			return
+		case item := <-p.queue:
+			p.publish(baseCtx, tracer, item)
 		}
+	}
+}
 
-		publishCtx, cancel := context.WithTimeout(parentCtx, linkVisitPublishTimeout)
-		publishCtx, span := tracer.Start(publishCtx, "shortener.link.visited.publish")
-		span.SetAttributes(
-			attribute.String("event.id", item.event.EventID),
-			attribute.String("link.id", item.event.LinkID),
-			attribute.String("link.short_code", item.event.ShortCode),
-		)
-
-		err := p.base.PublishLinkVisited(publishCtx, item.event)
-		cancel()
-		if err != nil {
-			metrics.ObserveLinkVisitPublish("shortener", "dispatch_failed")
-			p.log.Warn("async link.visited publish failed",
-				"operation", "publish_link_visited",
-				"error_kind", "publish_failed",
-				"error", err,
-				"event_id", item.event.EventID,
-				"link_id", item.event.LinkID,
-				"short_code", item.event.ShortCode,
-			)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "publish_failed")
-			span.End()
-			continue
+func (p *asyncLinkVisitPublisher) drain(baseCtx context.Context, tracer oteltrace.Tracer) {
+	for {
+		select {
+		case item := <-p.queue:
+			p.publish(baseCtx, tracer, item)
+		default:
+			return
 		}
-		metrics.ObserveLinkVisitPublish("shortener", "dispatch_success")
-		span.SetStatus(codes.Ok, "")
-		span.End()
 	}
 }
