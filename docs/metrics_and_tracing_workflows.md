@@ -26,6 +26,10 @@ Two baseline dashboards are provisioned automatically:
 
 - `Shortener Overview`
 - `Analytics Overview`
+- `Load Testing Overview`
+
+See [Load Testing Workflows](load_testing_workflows.md) for k6 scenarios, Prometheus remote write,
+PostgreSQL exporter, and Redis exporter usage.
 
 ## What The Stack Covers
 
@@ -63,6 +67,8 @@ Expected healthy targets:
 
 - `shortener`
 - `analytics`
+- `postgres-exporter`
+- `redis-exporter`
 - `prometheus`
 
 ### Grafana Dashboards

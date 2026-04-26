@@ -85,6 +85,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
     ports:
       - "9091:9090"
     volumes:
@@ -138,6 +139,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 15
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_NAME: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
@@ -282,6 +299,30 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+
+  k6:
+    image: grafana/k6:1.7.1
+    profiles:
+      - tools
+    working_dir: /scripts
+    volumes:
+      - ../../load/k6:/scripts:ro
+    environment:
+      BASE_URL: http://shortener:8080
+      DURATION: 30s
+      VUS: "5"
+      LINK_POOL_SIZE: "5"
+      CREATE_WEIGHT: "0.02"
+      REQUEST_DELAY_SECONDS: "1"
+      CREATE_CLIENT_IP_POOL: "20"
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_STATS: p(95),p(99),min,max
+      K6_PROMETHEUS_RW_STALE_MARKERS: "true"
+    depends_on:
+      shortener:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
 
 volumes:
   pg_data:

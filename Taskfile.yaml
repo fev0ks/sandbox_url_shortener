@@ -142,6 +142,61 @@ tasks:
         check_url analytics http://localhost:9090/health/ready
         check_url web "http://localhost:${web_port}"
 
+  load:smoke:
+    desc: "Run the k6 smoke scenario"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm k6 run /scripts/scenarios/smoke.js
+
+  load:steady:
+    desc: "Run safe steady redirect load"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm k6 run /scripts/scenarios/redirect-steady.js
+
+  load:mixed:
+    desc: "Run safe mixed create and redirect load"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm k6 run /scripts/scenarios/mixed-create-redirect.js
+
+  load:spike:
+    desc: "Run conservative spike redirect load"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm k6 run /scripts/scenarios/spike-redirect.js
+
+  load:saturation:
+    desc: "Run guarded saturation load; requires ALLOW_SATURATION=1"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm -e ALLOW_SATURATION k6 run /scripts/scenarios/saturation.js
+
+  load:steady:metrics:
+    desc: "Run steady redirect load and export k6 metrics to Prometheus"
+    cmds:
+      - |
+        test_id="${TEST_ID:-steady-local}"
+        docker compose -f {{.COMPOSE_FILE}} run --rm k6 run \
+          -o experimental-prometheus-rw \
+          --tag testid="$test_id" \
+          /scripts/scenarios/redirect-steady.js
+
+  load:mixed:metrics:
+    desc: "Run mixed create/redirect load and export k6 metrics to Prometheus"
+    cmds:
+      - |
+        test_id="${TEST_ID:-mixed-local}"
+        docker compose -f {{.COMPOSE_FILE}} run --rm k6 run \
+          -o experimental-prometheus-rw \
+          --tag testid="$test_id" \
+          /scripts/scenarios/mixed-create-redirect.js
+
+  load:spike:metrics:
+    desc: "Run spike redirect load and export k6 metrics to Prometheus"
+    cmds:
+      - |
+        test_id="${TEST_ID:-spike-local}"
+        docker compose -f {{.COMPOSE_FILE}} run --rm k6 run \
+          -o experimental-prometheus-rw \
+          --tag testid="$test_id" \
+          /scripts/scenarios/spike-redirect.js
+
   stop:
     desc: "Stop and remove the local Docker Compose stack"
     cmds:
