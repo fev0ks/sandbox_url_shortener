@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "url-shortener.serviceName" (dict "root" . "service" "shortener") }}
+  labels:
+    {{- include "url-shortener.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shortener
+spec:
+  type: {{ .Values.shortener.service.type }}
+  selector:
+    {{- include "url-shortener.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: shortener
+  ports:
+    - name: http
+      port: {{ .Values.shortener.service.port }}
+      targetPort: http
+      {{- if and (eq .Values.shortener.service.type "NodePort") .Values.shortener.service.nodePort }}
+      nodePort: {{ .Values.shortener.service.nodePort }}
+      {{- end }}

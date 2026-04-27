@@ -1,0 +1,14 @@
+global:
+  appEnv: local-k8s
+
+shortener:
+  service:
+    type: NodePort
+    nodePort: 30080
+  env:
+    BASE_URL: http://localhost:18080
+
+analytics:
+  service:
+    type: NodePort
+    nodePort: 30090

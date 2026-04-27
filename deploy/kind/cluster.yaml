@@ -1,0 +1,17 @@
+# Local kind cluster for the optional Kubernetes runtime.
+#
+# Docker Compose remains the default local runtime. This cluster maps stable
+# host ports to NodePort services so the Helm deployment can be smoke-tested
+# without installing an ingress controller.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: sandbox-url-shortener
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 18080
+        protocol: TCP
+      - containerPort: 30090
+        hostPort: 19090
+        protocol: TCP

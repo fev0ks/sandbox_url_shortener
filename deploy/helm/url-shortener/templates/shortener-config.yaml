@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "url-shortener.serviceName" (dict "root" . "service" "shortener") }}-config
+  labels:
+    {{- include "url-shortener.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shortener
+data:
+  APP_ENV: {{ .Values.global.appEnv | quote }}
+  {{- range $key, $value := .Values.shortener.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "url-shortener.serviceName" (dict "root" . "service" "shortener") }}-secret
+  labels:
+    {{- include "url-shortener.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shortener
+type: Opaque
+stringData:
+  {{- range $key, $value := .Values.shortener.secretEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

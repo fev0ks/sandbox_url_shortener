@@ -1,0 +1,83 @@
+global:
+  appEnv: local
+  imagePullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+shortener:
+  replicaCount: 1
+  image:
+    repository: sandbox-url-shortener/shortener
+    tag: local
+  service:
+    type: ClusterIP
+    port: 8080
+    nodePort: null
+  env:
+    APP_PORT: "8080"
+    LOG_LEVEL: INFO
+    BASE_URL: http://localhost:18080
+    DB_MAX_CONNS: "10"
+    REDIS_ADDR: host.docker.internal:6379
+    REDIS_DB: "0"
+    RATE_LIMIT_PER_MIN: "10"
+    KAFKA_BROKERS: host.docker.internal:29092
+    KAFKA_TOPIC_LINK_VISITED: link.visited.v1
+    KAFKA_TOPIC_LINK_VISITED_DLQ: link.visited.v1.dlq
+    KAFKA_PRODUCER_ENABLED: "false"
+    OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  secretEnv:
+    DB_DSN: postgres://shortener:shortener@host.docker.internal:5432/shortener?sslmode=disable
+  probes:
+    liveness:
+      path: /health/live
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 6
+  resources: {}
+
+analytics:
+  replicaCount: 1
+  image:
+    repository: sandbox-url-shortener/analytics
+    tag: local
+  service:
+    type: ClusterIP
+    port: 9090
+    nodePort: null
+  env:
+    ANALYTICS_ADMIN_PORT: "9090"
+    LOG_LEVEL: INFO
+    KAFKA_BROKERS: host.docker.internal:29092
+    KAFKA_TOPIC_LINK_VISITED: link.visited.v1
+    KAFKA_TOPIC_LINK_VISITED_DLQ: link.visited.v1.dlq
+    KAFKA_CONSUMER_GROUP: analytics-link-visited-v1
+    KAFKA_CONSUMER_ENABLED: "false"
+    CLICKHOUSE_ADDR: host.docker.internal:9000
+    CLICKHOUSE_DATABASE: analytics
+    CLICKHOUSE_USERNAME: default
+    OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  secretEnv:
+    CLICKHOUSE_PASSWORD: ""
+  probes:
+    liveness:
+      path: /health/live
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 6
+  resources: {}

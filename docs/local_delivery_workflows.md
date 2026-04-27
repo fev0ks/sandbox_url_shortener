@@ -25,6 +25,10 @@ task reset
 and `make migrate-version`, but `Taskfile.yaml` is the canonical entrypoint for verification and
 local delivery.
 
+The optional local Kubernetes workflow is documented separately in
+[Local Kubernetes Workflows](local_kubernetes_workflows.md). Use it when you specifically want to
+exercise `kind + Helm`; Docker Compose remains the default local runtime.
+
 ## Verify
 
 Run:

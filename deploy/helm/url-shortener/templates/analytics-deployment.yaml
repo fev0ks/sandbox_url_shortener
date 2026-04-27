@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "url-shortener.serviceName" (dict "root" . "service" "analytics") }}
+  labels:
+    {{- include "url-shortener.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analytics
+spec:
+  replicas: {{ .Values.analytics.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "url-shortener.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: analytics
+  template:
+    metadata:
+      labels:
+        {{- include "url-shortener.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: analytics
+    spec:
+      containers:
+        - name: analytics
+          image: "{{ .Values.analytics.image.repository }}:{{ .Values.analytics.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.analytics.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "url-shortener.serviceName" (dict "root" . "service" "analytics") }}-config
+            - secretRef:
+                name: {{ include "url-shortener.serviceName" (dict "root" . "service" "analytics") }}-secret
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.analytics.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.analytics.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.analytics.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.analytics.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.analytics.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.analytics.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.analytics.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.analytics.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.analytics.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.analytics.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.analytics.resources | nindent 12 }}

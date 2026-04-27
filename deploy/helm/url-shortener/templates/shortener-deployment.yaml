@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "url-shortener.serviceName" (dict "root" . "service" "shortener") }}
+  labels:
+    {{- include "url-shortener.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shortener
+spec:
+  replicas: {{ .Values.shortener.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "url-shortener.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: shortener
+  template:
+    metadata:
+      labels:
+        {{- include "url-shortener.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: shortener
+    spec:
+      containers:
+        - name: shortener
+          image: "{{ .Values.shortener.image.repository }}:{{ .Values.shortener.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.shortener.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "url-shortener.serviceName" (dict "root" . "service" "shortener") }}-config
+            - secretRef:
+                name: {{ include "url-shortener.serviceName" (dict "root" . "service" "shortener") }}-secret
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.shortener.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.shortener.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.shortener.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.shortener.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.shortener.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.shortener.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.shortener.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.shortener.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.shortener.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.shortener.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.shortener.resources | nindent 12 }}

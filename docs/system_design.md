@@ -100,9 +100,10 @@ flowchart LR
 
 ## Local Kubernetes Runtime
 
-In the local kind setup, Prometheus and Grafana run outside the cluster (on the host or in Docker
-Compose) and scrape application pods via `kubectl port-forward` or NodePort services. This avoids
-deploying the full monitoring stack into the local cluster while still providing metrics visibility.
+In the local kind setup, project-owned application workloads run in Kubernetes while stateful
+dependencies stay in Docker Compose. The first Helm chart deploys `shortener` and `analytics` only;
+the browser `web` service and observability stack remain outside the cluster for this milestone.
+Stable kind NodePort mappings expose the app workloads on local host ports for smoke testing.
 
 ```mermaid
 flowchart LR
@@ -113,13 +114,12 @@ flowchart LR
         prom["Prometheus"]
         grafana["Grafana"]
         tempo["Tempo"]
-        web["web"]
+        web["web (Compose / host)"]
     end
 
-    subgraph kind["Local kind Cluster + Helm (later stage)"]
+    subgraph kind["Local kind Cluster + Helm"]
         helm["Helm Release"]
-        ingress["Ingress / Service"]
-        k8s_web["web Deployment"]
+        nodeport["NodePort Services"]
         k8s_shortener["shortener-service Deployment"]
         k8s_analytics["analytics Deployment"]
     end
@@ -127,7 +127,7 @@ flowchart LR
     subgraph deps["Shared Local Dependencies"]
         pg["PostgreSQL"]
         redis["Redis"]
-        kafka["Kafka"]
+        kafka["Kafka (Compose; disabled by default in kind values)"]
         ch["ClickHouse"]
         shipper["Fluent Bit"]
         es["Elasticsearch"]
@@ -135,18 +135,18 @@ flowchart LR
     end
 
     cli --> helm
-    helm --> k8s_web
     helm --> k8s_shortener
     helm --> k8s_analytics
-    user --> ingress
-    ingress --> k8s_web
-    k8s_web --> k8s_shortener
+    user --> nodeport
+    nodeport --> k8s_shortener
+    nodeport --> k8s_analytics
+    web --> k8s_shortener
 
     k8s_shortener --> pg
     k8s_shortener --> redis
-    k8s_shortener --> kafka
-    k8s_web -.->|stats reads| k8s_analytics
-    kafka --> k8s_analytics
+    k8s_shortener -.-> kafka
+    web -.->|stats reads| k8s_analytics
+    kafka -.-> k8s_analytics
     k8s_analytics --> ch
     k8s_shortener --> shipper
     k8s_analytics --> shipper
@@ -346,8 +346,9 @@ Kubernetes, liveness and readiness probes target the matching endpoints via `htt
 
 ### kind And Helm
 
-- later-stage local Kubernetes runtime for production-like deployment behavior
-- used to validate probes, rollout mechanics, ingress, and Helm-based packaging locally
+- optional local Kubernetes runtime for production-like deployment behavior
+- first chart covers `shortener` and `analytics`; stateful dependencies remain Compose-backed
+- used to validate probes, rollout mechanics, NodePort access, and Helm-based packaging locally
 - not required before the core application and observability loops are stable
 
 ### Minikube

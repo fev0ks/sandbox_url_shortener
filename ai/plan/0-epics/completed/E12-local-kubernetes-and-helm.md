@@ -1,5 +1,7 @@
 # E12 - Local Kubernetes And Helm
 
+Status: complete
+
 ## Summary
 
 Infrastructure evolution epic for moving from the default Docker Compose runtime to a local
@@ -24,6 +26,11 @@ ingress, and local deployment behavior can be exercised without using cloud infr
 - `kind + Helm` becomes the later local production-like runtime
 - Minikube is optional and remains outside the main path
 - local Kubernetes work starts only after the Compose-based stack and observability loops are stable
+- first-pass local Kubernetes deploys only project-owned application workloads into `kind`
+- PostgreSQL, Redis, and ClickHouse stay Compose-backed for the first pass
+- local access uses kind NodePort mappings instead of installing an ingress controller
+- Kafka producer and consumer paths stay disabled in default kind values until the Compose broker
+  exposes a pod-reachable advertised listener
 
 ## Task Links
 
@@ -34,5 +41,5 @@ ingress, and local deployment behavior can be exercised without using cloud infr
 
 ## Open Questions
 
-- whether infrastructure dependencies should stay outside the main chart or be partially templated
-- whether local TLS is worth adding in the first kind milestone
+- whether a later E12 follow-up should template any stateful dependencies in-cluster
+- whether local TLS is worth adding after the NodePort-based first pass

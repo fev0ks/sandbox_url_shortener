@@ -8,6 +8,13 @@ vars:
 
   BIN_DIR: '{{.ROOT_DIR}}/bin'
   COMPOSE_FILE: '{{.ROOT_DIR}}/deploy/docker-compose/docker-compose.yml'
+  KIND_CLUSTER: sandbox-url-shortener
+  KIND_CONFIG: '{{.ROOT_DIR}}/deploy/kind/cluster.yaml'
+  K8S_NAMESPACE: sandbox-url-shortener
+  HELM_RELEASE: sandbox-url-shortener
+  HELM_CHART: '{{.ROOT_DIR}}/deploy/helm/url-shortener'
+  SHORTENER_IMAGE: sandbox-url-shortener/shortener:local
+  ANALYTICS_IMAGE: sandbox-url-shortener/analytics:local
   GOLANGCI_LINT: '{{.BIN_DIR}}/golangci-lint'
   GCI: '{{.BIN_DIR}}/gci'
   GOFUMPT: '{{.BIN_DIR}}/gofumpt'
@@ -196,6 +203,143 @@ tasks:
           -o experimental-prometheus-rw \
           --tag testid="$test_id" \
           /scripts/scenarios/spike-redirect.js
+
+  k8s:dependencies:
+    desc: "Start Compose-backed dependencies for the local kind runtime"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} up -d postgres redis clickhouse
+      - docker compose -f {{.COMPOSE_FILE}} run --rm migrate
+
+  k8s:cluster:create:
+    desc: "Create the local kind cluster if it does not exist"
+    cmds:
+      - |
+        if kind get clusters | grep -qx '{{.KIND_CLUSTER}}'; then
+          echo "kind cluster {{.KIND_CLUSTER}} already exists"
+        else
+          kind create cluster --config {{.KIND_CONFIG}}
+        fi
+      - kubectl config use-context kind-{{.KIND_CLUSTER}}
+
+  k8s:cluster:delete:
+    desc: "Delete the local kind cluster"
+    cmds:
+      - kind delete cluster --name {{.KIND_CLUSTER}}
+
+  k8s:images:
+    desc: "Build shortener and analytics images and load them into kind"
+    cmds:
+      - docker build -t {{.SHORTENER_IMAGE}} -f services/shortener/Dockerfile .
+      - docker build -t {{.ANALYTICS_IMAGE}} -f services/analytics/Dockerfile .
+      - kind load docker-image --name {{.KIND_CLUSTER}} {{.SHORTENER_IMAGE}} {{.ANALYTICS_IMAGE}}
+
+  k8s:template:
+    desc: "Render the Helm chart for the local kind values"
+    cmds:
+      - helm template {{.HELM_RELEASE}} {{.HELM_CHART}} --namespace {{.K8S_NAMESPACE}} -f {{.HELM_CHART}}/values-kind.yaml
+
+  k8s:deploy:
+    desc: "Deploy shortener and analytics to local kind with Helm"
+    cmds:
+      - task: k8s:dependencies
+      - task: k8s:cluster:create
+      - task: k8s:images
+      - |
+        helm upgrade --install {{.HELM_RELEASE}} {{.HELM_CHART}} \
+          --namespace {{.K8S_NAMESPACE}} \
+          --create-namespace \
+          -f {{.HELM_CHART}}/values-kind.yaml
+      - kubectl -n {{.K8S_NAMESPACE}} rollout status deployment/{{.HELM_RELEASE}}-shortener --timeout=180s
+      - kubectl -n {{.K8S_NAMESPACE}} rollout status deployment/{{.HELM_RELEASE}}-analytics --timeout=180s
+      - task: k8s:smoke
+
+  k8s:smoke:
+    desc: "Run HTTP smoke checks against the local kind deployment"
+    cmds:
+      - |
+        set -eu
+        check_url() {
+          name="$1"
+          url="$2"
+          echo "Checking ${name} at ${url}"
+          attempt=1
+          while [ "$attempt" -le 30 ]; do
+            if curl -fsS "$url" >/dev/null; then
+              echo "${name} is ready"
+              return 0
+            fi
+            sleep 2
+            attempt=$((attempt + 1))
+          done
+          echo "${name} failed smoke check: ${url}" >&2
+          return 1
+        }
+
+        check_url shortener http://localhost:18080/health/ready
+        check_url analytics http://localhost:19090/health/ready
+
+  k8s:status:
+    desc: "Show local kind Kubernetes resources"
+    cmds:
+      - kubectl -n {{.K8S_NAMESPACE}} get pods,svc,deploy
+
+  k8s:logs:
+    desc: "Tail shortener and analytics logs from the local kind deployment"
+    cmds:
+      - kubectl -n {{.K8S_NAMESPACE}} logs deploy/{{.HELM_RELEASE}}-shortener --all-containers --tail=100
+      - kubectl -n {{.K8S_NAMESPACE}} logs deploy/{{.HELM_RELEASE}}-analytics --all-containers --tail=100
+
+  k8s:generate-logs:
+    desc: "Generate shortener pod logs through the local kind NodePort"
+    cmds:
+      - |
+        set -eu
+        base_url="${BASE_URL:-http://localhost:18080}"
+        create_count="${LOG_CREATE_COUNT:-8}"
+        missing_count="${LOG_MISSING_COUNT:-30}"
+        rate_limit_count="${LOG_RATE_LIMIT_COUNT:-20}"
+        run_id="$(date +%s)-$$"
+
+        echo "Generating ${create_count} create+redirect requests at ${base_url}"
+        for i in $(seq 1 "$create_count"); do
+          code=$(curl -sS -X POST "${base_url}/api/v1/links" \
+            -H 'Content-Type: application/json' \
+            -H "Idempotency-Key: log-test-${run_id}-${i}" \
+            -d '{"original_url":"https://example.invalid/k8s-log-target","title":"k8s-log-test","max_clicks":0}' \
+            | sed -n 's/.*"short_code":"\([^"]*\)".*/\1/p')
+
+          if [ -n "$code" ]; then
+            curl -sS -o /dev/null "${base_url}/${code}"
+          fi
+        done
+
+        echo "Generating ${missing_count} not-found redirects"
+        for i in $(seq 1 "$missing_count"); do
+          curl -sS -o /dev/null "${base_url}/missing-${run_id}-${i}"
+        done
+
+        echo "Generating ${rate_limit_count} create attempts to exercise rate-limit logs"
+        for i in $(seq 1 "$rate_limit_count"); do
+          curl -sS -o /dev/null -X POST "${base_url}/api/v1/links" \
+            -H 'Content-Type: application/json' \
+            -H "Idempotency-Key: rate-limit-${run_id}-${i}" \
+            -d '{"original_url":"https://example.invalid/rate-limit-target","title":"rate-limit-test","max_clicks":0}'
+        done
+
+        echo "Done. Inspect logs with:"
+        echo "kubectl -n {{.K8S_NAMESPACE}} logs deploy/{{.HELM_RELEASE}}-shortener | grep -E 'link_create|redirect|not_found|rate_limited'"
+
+  k8s:reset:
+    desc: "Uninstall the Helm release and delete the local kind cluster"
+    cmds:
+      - |
+        if kind get clusters | grep -qx '{{.KIND_CLUSTER}}'; then
+          kubectl config use-context kind-{{.KIND_CLUSTER}}
+          helm uninstall {{.HELM_RELEASE}} --namespace {{.K8S_NAMESPACE}} --ignore-not-found || true
+          kind delete cluster --name {{.KIND_CLUSTER}}
+        else
+          echo "kind cluster {{.KIND_CLUSTER}} does not exist"
+        fi
 
   stop:
     desc: "Stop and remove the local Docker Compose stack"
