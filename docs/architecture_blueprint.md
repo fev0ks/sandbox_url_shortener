@@ -69,6 +69,24 @@ with other patterns (lazy DI containers, framework-driven DI, flat `main.go`), s
 │   │                   │   └── handlers.go
 │   │                   └── admin/      # audience subgrouping when admin/public diverge
 │   │                       └── link/
+│   ├── identity/
+│   │   ├── cmd/
+│   │   │   ├── identity/              # HTTP runtime for accounts, sessions, OAuth, CSRF
+│   │   │   └── identity-maintenance/  # one-shot operational CLI, e.g. retention cleanup
+│   │   ├── Dockerfile
+│   │   ├── migrations/
+│   │   │   └── postgres/
+│   │   └── internal/
+│   │       ├── app/            # composition root for the identity HTTP runtime
+│   │       ├── config/         # identity-owned env contract
+│   │       ├── domain/         # accounts, auth identities, sessions, OAuth state
+│   │       ├── service/        # auth, OAuth, retention, token/password helpers
+│   │       ├── repository/     # identity-owned store adapters
+│   │       └── transport/
+│   │           └── http/
+│   │               └── stdlib/
+│   │                   ├── auth/       # auth/session/OAuth HTTP contract
+│   │                   └── respond/
 │   └── analytics/
 │       ├── cmd/
 │       │   └── analytics/
@@ -78,7 +96,6 @@ with other patterns (lazy DI containers, framework-driven DI, flat `main.go`), s
 │       └── internal/
 │           ├── app/            # analytics runtime wiring
 │           └── config/         # analytics-owned env contract
-│   │
 ├── internal/
 │   └── platform/               # cross-cutting infra used by every binary
 │       ├── logger/             # slog setup + context helpers
@@ -111,8 +128,9 @@ with other patterns (lazy DI containers, framework-driven DI, flat `main.go`), s
   feature. Each feature package owns a `Handler` struct, a `NewHandler` constructor, a `Register(mux)`
   method that wires its routes, handler methods, and its own DTOs. (We use `Handler` instead of
   `Server` because in HTTP "server" already means `http.Server` — `Server` is gRPC vocabulary.)
-  Transport packages depend on
-  `domain` interfaces, never directly on `service` or `repository` concrete types. See §3.4.
+  Transport packages depend on narrow handler-local interfaces and must never call repositories.
+  They may import service-layer transport-safe result types when that keeps the handler contract
+  explicit; they should not construct concrete service implementations. See §3.4.
 - **`internal/platform/...`** is cross-cutting infrastructure with no business knowledge.
 - **`services/<service>/internal/app`** is the composition root for that runtime — the only
   place where concrete `service.New*` and `postgres.New*` are called.
@@ -120,6 +138,9 @@ with other patterns (lazy DI containers, framework-driven DI, flat `main.go`), s
   logic near the runtime it builds.
 - **`services/<service>/migrations/...`** belongs to the service that owns the schema. Keep
   service-owned SQL migrations out of repo-root catch-all folders.
+- **A service may own more than one command** when the extra binary is operationally tied to the
+  same domain, for example `cmd/identity` plus `cmd/identity-maintenance`. Keep long-running HTTP
+  runtimes behind an `App`; keep one-shot maintenance commands explicit and small.
 - **`deploy/...`** owns orchestration only. Compose, Helm, and cluster manifests may reference
   service Dockerfiles and migrations, but they do not own them.
 
@@ -257,6 +278,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 ```
 
+Auth-style feature packages follow the same rule even when the surface is broader than CRUD:
+`auth.Handler.Register` owns CSRF, password signup/login/logout, current-session validation, and
+OAuth start/callback routes. Stable route strings, header names, cookie names, OAuth provider
+names, error codes, and audit operation names should live in `const` blocks near the contract that
+uses them.
+
 Why `Handler` and not `Server`: in HTTP, "Server" already means `http.Server` (the listener);
 `Server` is gRPC vocabulary where you literally implement an `XxxServer` interface from
 generated protobuf code. In Go HTTP code, `Handler` is the standard term and the package
@@ -270,7 +297,7 @@ feature grows past ~300 lines, split `handlers.go` into `handlers_crud.go`,
 #### 3.4.2 The router — `app/router.go`
 
 `buildRouter` is the **table of contents** for the binary's HTTP surface. It registers
-platform routes directly, asks each feature server to register its own routes, and wraps
+platform routes directly, asks each feature handler to register its own routes, and wraps
 everything in the middleware chain. Adding a new feature is one new line here.
 
 ```go
@@ -604,46 +631,62 @@ between an HTTP handler and a worker job that want to bind a long-lived attribut
 Standard order, applied in `initHTTPServer`:
 
 ```
-recovery → request_id → logging → handler
+recovery → request_id → correlation_id → telemetry → metrics → logging → handler
 ```
 
 - **`recovery`** catches panics, logs with stack, returns standard JSON error.
 - **`request_id`** reads `X-Request-ID` or generates one, stores in context, sets on
   response header.
+- **`correlation_id`** reads `X-Correlation-ID` or falls back to `request_id`.
+- **`telemetry`** starts a server span and attaches trace metadata to context.
+- **`metrics`** records HTTP duration and status labels.
 - **`logging`** emits one structured line per request with method, path, status, duration,
-  request_id.
+  request_id, correlation_id, and trace_id when available.
 
 ### 6.3 Health and metrics ports
 
 | Binary | Port | Purpose |
 |--------|------|---------|
 | Shortener | `APP_PORT` (e.g. 8080) | serves both business routes AND `/health/*`, `/metrics` |
+| Identity | `IDENTITY_APP_PORT` (e.g. 8081) | serves auth/session/OAuth routes AND `/health/*`, `/metrics` |
 | Analytics | `ANALYTICS_ADMIN_PORT` (e.g. 9090) | serves only `/health/*`, `/metrics` |
 
-The analytics runtime has no business HTTP API but still exposes a small admin server so Kubernetes
-probes and Prometheus scraping work uniformly.
+The analytics runtime has no user-facing write API but still exposes a small admin/stats server so
+Kubernetes probes and Prometheus scraping work uniformly. Identity follows the same health and
+metrics shape as shortener so Compose, Prometheus, and future gateway validation can treat it as a
+first-class backend service.
 
 ---
 
-## 7. Two Binaries Pattern
+## 7. Multiple Binaries Pattern
 
-A typical service split here has:
+A typical runtime split here has:
+
 - `services/shortener/cmd/shortener` — request-driven, owns the HTTP API
+- `services/identity/cmd/identity` — request-driven, owns account, session, CSRF, and OAuth API
+- `services/identity/cmd/identity-maintenance` — one-shot operational command for identity
+  retention cleanup
 - `services/analytics/cmd/analytics` — background-driven, owns timers/queues/consumers
 
-Each binary has:
+Each long-running binary has:
+
 - its own `App` struct
 - its own `container` when that runtime needs one
 - its own `NewApp`
 - shared init helpers via package-level functions in `services/<service>/internal/app/` or a
   shared infra package when useful
 
-### Why not one big container with both?
+One-shot maintenance commands can skip the `App` struct when they only load config, open one
+resource, execute one service method, and exit. They should still reuse the same service and
+repository layers as the HTTP runtime.
+
+### Why not one big container with everything?
 
 - The API binary should not import Kafka producer code if it doesn't use it.
 - The analytics runtime should not import HTTP handlers.
-- Each binary's `container` reflects only what that binary needs, so build size and
-  failure surface stay minimal.
+- The identity maintenance command should not import HTTP handlers or start an HTTP server.
+- Each runtime's `container` reflects only what that runtime needs, so build size and failure
+  surface stay minimal.
 
 ### Sharing init logic
 
@@ -666,8 +709,13 @@ binary that calls it registers cleanup.
 - **Rule**: migrations are applied **explicitly**, never on app boot. The application
   process should fail (or refuse to serve) if the schema is missing required tables, but
   it should not run migrations itself.
+- **Metadata**: when multiple service-owned migration streams share one physical database during
+  local bootstrap, give each stream its own migrate metadata table (for example
+  `schema_migrations_identity`). Independent services may each start at `000001`; a shared
+  metadata table would incorrectly make one service's first migration hide another's.
 - **Operational**:
   - local: `make migrate-up`
+  - service-specific local streams: `make <service>-migrate-up` or `task <service>:migrate`
   - CI: run before integration tests
   - deploy: run before switching traffic
 
@@ -776,8 +824,11 @@ When starting a new service from this blueprint:
 13. **Add the first domain entity** following the pattern in section 4: struct → repo
     interface → service interface → postgres repo → service impl → handler → DTOs.
 14. **Wire it in `newContainer`**, register routes in `initHTTPServer`.
-15. **Run `make migrate-up && make run` and curl your endpoint.**
-16. **Set up the plan board** by copying `ai/plan/templates/` and `ai/plan/README.md`.
+15. **Add maintenance commands only when a bounded operational workflow exists** (retention,
+    repair, one-shot import). Reuse service/repository code; do not add a background worker by
+    default.
+16. **Run `make migrate-up && make run` and curl your endpoint.**
+17. **Set up the plan board** by copying `ai/plan/templates/` and `ai/plan/README.md`.
 
 If steps 1–12 take more than an afternoon, the blueprint is fighting you and we should
 revisit it.
