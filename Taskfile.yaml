@@ -14,6 +14,7 @@ vars:
   HELM_RELEASE: sandbox-url-shortener
   HELM_CHART: '{{.ROOT_DIR}}/deploy/helm/url-shortener'
   SHORTENER_IMAGE: sandbox-url-shortener/shortener:local
+  IDENTITY_IMAGE: sandbox-url-shortener/identity:local
   ANALYTICS_IMAGE: sandbox-url-shortener/analytics:local
   GOLANGCI_LINT: '{{.BIN_DIR}}/golangci-lint'
   GCI: '{{.BIN_DIR}}/gci'
@@ -73,17 +74,41 @@ tasks:
       - go test ./... -v
 
   build:
-    desc: "Build shortener and analytics binaries"
+    desc: "Build shortener, identity, identity-maintenance, and analytics binaries"
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - go build -o {{.BIN_DIR}}/shortener ./services/shortener/cmd/shortener
+      - go build -o {{.BIN_DIR}}/identity ./services/identity/cmd/identity
+      - go build -o {{.BIN_DIR}}/identity-maintenance ./services/identity/cmd/identity-maintenance
       - go build -o {{.BIN_DIR}}/analytics ./services/analytics/cmd/analytics
+
+  identity:cleanup:
+    desc: "Run identity retention cleanup once using DB_DSN and identity retention env"
+    cmds:
+      - go run ./services/identity/cmd/identity-maintenance cleanup
+
+  identity:migrate:
+    desc: "Run identity PostgreSQL migrations with the identity migration table"
+    cmds:
+      - make identity-migrate-up
 
   web-install:
     desc: "Install web frontend dependencies"
     dir: '{{.WEB_DIR}}'
     cmds:
+      - |
+        find . -name .DS_Store -delete 2>/dev/null || true
+        rm -rf .node_modules.delete.* 2>/dev/null || true
+        if [ -e node_modules ]; then
+          trash=".node_modules.delete.$(date +%s).$$"
+          mv node_modules "$trash"
+          rm -rf "$trash" 2>/dev/null || true
+        fi
+        test ! -e node_modules
       - npm ci
+      - |
+        find . -name .DS_Store -delete 2>/dev/null || true
+        rm -rf .node_modules.delete.* 2>/dev/null || true
 
   web-build:
     desc: "Build the Next.js frontend"
@@ -114,7 +139,7 @@ tasks:
     desc: "Build the runtime images used by the local Docker Compose stack"
     cmds:
       - task: verify
-      - docker compose -f {{.COMPOSE_FILE}} build shortener analytics web
+      - docker compose -f {{.COMPOSE_FILE}} build shortener identity analytics web
 
   deploy:
     desc: "Build images, run migrations, start the stack, and execute smoke checks"
@@ -146,6 +171,7 @@ tasks:
         }
 
         check_url shortener http://localhost:8080/health/ready
+        check_url identity http://localhost:8081/health/ready
         check_url analytics http://localhost:9090/health/ready
         check_url web "http://localhost:${web_port}"
 
@@ -227,11 +253,12 @@ tasks:
       - kind delete cluster --name {{.KIND_CLUSTER}}
 
   k8s:images:
-    desc: "Build shortener and analytics images and load them into kind"
+    desc: "Build shortener, identity, and analytics images and load them into kind"
     cmds:
       - docker build -t {{.SHORTENER_IMAGE}} -f services/shortener/Dockerfile .
+      - docker build -t {{.IDENTITY_IMAGE}} -f services/identity/Dockerfile .
       - docker build -t {{.ANALYTICS_IMAGE}} -f services/analytics/Dockerfile .
-      - kind load docker-image --name {{.KIND_CLUSTER}} {{.SHORTENER_IMAGE}} {{.ANALYTICS_IMAGE}}
+      - kind load docker-image --name {{.KIND_CLUSTER}} {{.SHORTENER_IMAGE}} {{.IDENTITY_IMAGE}} {{.ANALYTICS_IMAGE}}
 
   k8s:template:
     desc: "Render the Helm chart for the local kind values"

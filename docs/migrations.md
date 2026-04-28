@@ -36,6 +36,11 @@ services/
       postgres/
         000001_create_links_table.up.sql
         000001_create_links_table.down.sql
+  identity/
+    migrations/
+      postgres/
+        000001_create_identity_tables.up.sql
+        000001_create_identity_tables.down.sql
 ```
 
 Each schema change is a pair of files:
@@ -75,18 +80,29 @@ migrate -path services/shortener/migrations/postgres \
         up
 ```
 
+Identity uses the same local PostgreSQL database but a separate migration metadata table, because
+its migration numbering starts at `000001` under a service-owned migration directory:
+
+```bash
+make identity-migrate-up
+```
+
+This uses `x-migrations-table=schema_migrations_identity` so identity migrations do not collide
+with shortener migrations in the default `schema_migrations` table.
+
 ### Local (Docker Compose)
 
-A one-shot `migrate` service is included in `docker-compose.yml`.
+One-shot `migrate` and `identity-migrate` services are included in `docker-compose.yml`.
 
 - `task deploy` (preferred) brings the stack up and triggers the `migrate` service before
-  `shortener` starts
+  `shortener` starts, and the `identity-migrate` service before `identity` starts
 - `make run` uses the same compose flow when you want the lower-level helper
 
-You can also invoke the migration runner directly:
+You can also invoke the migration runners directly:
 
 ```bash
 docker compose -f deploy/docker-compose/docker-compose.yml run --rm migrate
+docker compose -f deploy/docker-compose/docker-compose.yml run --rm identity-migrate
 ```
 
 ### Rolling Back
@@ -191,6 +207,6 @@ These rules come from the project's [data and logging strategy](data_and_logging
 
 | Environment | How migrations run |
 |---|---|
-| Local dev | `task deploy`, `make run`, or manual `make migrate-up` / docker-compose `migrate` |
+| Local dev | `task deploy`, `make run`, or manual `make migrate-up` / `make identity-migrate-up` |
 | CI | Run migrations before integration tests to validate schema |
 | Deploy | Run migrations before switching traffic to the new version |

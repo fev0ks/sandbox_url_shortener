@@ -1,13 +1,17 @@
 COMPOSE_FILE := deploy/docker-compose/docker-compose.yml
 
-.PHONY: build test lint run stop web-install web-build migrate-up migrate-down migrate-create migrate-version
+.PHONY: build test lint run stop web-install web-build migrate-up migrate-down migrate-create migrate-version identity-migrate-up identity-migrate-version
 
 DB_DSN ?= postgres://shortener:shortener@localhost:5432/shortener?sslmode=disable
 MIGRATE_PATH := services/shortener/migrations/postgres
+IDENTITY_DB_DSN ?= postgres://shortener:shortener@localhost:5432/shortener?sslmode=disable&x-migrations-table=schema_migrations_identity
+IDENTITY_MIGRATE_PATH := services/identity/migrations/postgres
 
-## build: compile both binaries locally
+## build: compile service binaries locally
 build:
 	go build ./services/shortener/cmd/shortener
+	go build ./services/identity/cmd/identity
+	go build ./services/identity/cmd/identity-maintenance
 	go build ./services/analytics/cmd/analytics
 
 ## test: run all tests
@@ -49,3 +53,11 @@ migrate-create:
 ## migrate-version: show current migration version
 migrate-version:
 	migrate -path $(MIGRATE_PATH) -database "$(DB_DSN)" version
+
+## identity-migrate-up: apply all pending identity PostgreSQL migrations
+identity-migrate-up:
+	migrate -path $(IDENTITY_MIGRATE_PATH) -database "$(IDENTITY_DB_DSN)" up
+
+## identity-migrate-version: show current identity migration version
+identity-migrate-version:
+	migrate -path $(IDENTITY_MIGRATE_PATH) -database "$(IDENTITY_DB_DSN)" version

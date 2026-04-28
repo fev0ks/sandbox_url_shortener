@@ -94,6 +94,8 @@ services:
     depends_on:
       shortener:
         condition: service_started
+      identity:
+        condition: service_started
       analytics:
         condition: service_started
     healthcheck:
@@ -233,6 +235,43 @@ services:
       timeout: 3s
       retries: 5
 
+  identity:
+    build:
+      context: ../..
+      dockerfile: services/identity/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - ../../.env
+    environment:
+      IDENTITY_APP_PORT: "8081"
+      DB_DSN: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
+      IDENTITY_PUBLIC_BASE_URL: http://localhost:8081
+      WEB_ORIGIN: http://localhost:${WEB_PORT:-3000}
+      WEB_AUTH_CALLBACK_URL: http://localhost:${WEB_PORT:-3000}/auth/callback
+      IDENTITY_COOKIE_SECURE: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: tempo:4318
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      fluent-bit:
+        condition: service_started
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "localhost:24224"
+        fluentd-async: "true"
+        tag: "identity.{{.Name}}"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   web:
     build:
       context: ../..
@@ -243,9 +282,12 @@ services:
       - ../../.env
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://shortener:8080
+      NEXT_PUBLIC_IDENTITY_API_BASE_URL: http://localhost:8081
       ANALYTICS_API_BASE_URL: http://analytics:9090
     depends_on:
       shortener:
+        condition: service_healthy
+      identity:
         condition: service_healthy
       analytics:
         condition: service_healthy
@@ -294,6 +336,19 @@ services:
     command:
       - "-path=/migrations"
       - "-database=postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  identity-migrate:
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ../../services/identity/migrations/postgres:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable&x-migrations-table=schema_migrations_identity"
       - "up"
     depends_on:
       postgres:

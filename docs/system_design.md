@@ -22,6 +22,7 @@ Detailed defaults for data stores, migrations, and logging live in
 This design covers the MVP and the planned production-like stack:
 
 - `shortener-service` as the main user-facing service
+- `identity` service for accounts, password and OAuth login, browser sessions, CSRF, and audit
 - `web` as the browser-facing frontend service
 - `analytics` service
 - `k6` load generator for controlled performance testing
@@ -59,6 +60,7 @@ flowchart LR
         subgraph compose["Docker Compose Runtime (default early stage)"]
             web["web (Next.js)"]
             shortener["shortener-service (shortener)"]
+            identity["identity"]
             analytics["analytics"]
             pg["PostgreSQL"]
             redis["Redis"]
@@ -71,10 +73,20 @@ flowchart LR
             kibana["Kibana"]
             shipper["Fluent Bit / Log Shipper"]
         end
+
+        subgraph providers["External OAuth Providers"]
+            google["Google OIDC"]
+            apple["Sign in with Apple"]
+        end
     end
 
     user --> web
     web --> shortener
+    web --> identity
+    user -. OAuth redirect .-> google
+    user -. OAuth redirect .-> apple
+    google -. callback .-> identity
+    apple -. form_post .-> identity
     operator --> grafana
     operator --> kibana
     k6 --> shortener
@@ -83,15 +95,19 @@ flowchart LR
     shortener --> pg
     shortener --> redis
     shortener --> kafka
+    identity --> pg
     kafka --> analytics
     analytics --> ch
     shortener --> shipper
+    identity --> shipper
     analytics --> shipper
     shipper --> es
     es --> kibana
     prom --> shortener
+    prom --> identity
     prom --> analytics
     shortener --> tempo
+    identity --> tempo
     analytics --> tempo
     k6 --> prom
     prom --> grafana
@@ -102,7 +118,9 @@ flowchart LR
 
 In the local kind setup, project-owned application workloads run in Kubernetes while stateful
 dependencies stay in Docker Compose. The first Helm chart deploys `shortener` and `analytics` only;
-the browser `web` service and observability stack remain outside the cluster for this milestone.
+the browser `web` service, the `identity` service, and the observability stack remain outside the
+cluster for this milestone. The `identity` Helm wiring is tracked as a follow-up to E12 and is
+expected to land alongside the gateway work in E15.
 Stable kind NodePort mappings expose the app workloads on local host ports for smoke testing.
 
 ```mermaid
@@ -168,6 +186,7 @@ flowchart LR
 flowchart TB
     subgraph app["Application Layer"]
         shortener["shortener-service (`services/shortener/cmd/shortener`)"]
+        identity["identity (`services/identity/cmd/identity`)"]
         web["web (`services/web`)"]
         analytics["services/analytics/cmd/analytics"]
     end
@@ -190,22 +209,27 @@ flowchart TB
     end
 
     web --> shortener
+    web --> identity
     shortener --> pg
     shortener --> redis
     shortener --> kafka
+    identity --> pg
     web -.->|stats reads| analytics
     kafka --> analytics
     analytics --> ch
 
     prom --> shortener
+    prom --> identity
     prom --> analytics
     shortener --> tempo
+    identity --> tempo
     analytics --> tempo
     k6 --> prom
     prom --> grafana
     tempo --> grafana
 
     shortener --> shipper
+    identity --> shipper
     analytics --> shipper
     shipper --> es
     es --> kibana
@@ -236,19 +260,46 @@ Constraints:
 - future alternative HTTP runtimes such as `api-http-chi` or `api-http-gin` may reuse the same
   service and repository layers, but they are not part of the MVP baseline
 
+### `identity`
+
+The `identity` service owns accounts, authentication methods, browser sessions, CSRF tokens, and
+OAuth login. It is implemented under `services/identity/cmd/identity` with its own
+PostgreSQL-backed storage and exposes the auth contracts consumed by `web` directly today and by
+the future `gateway` (E15) tomorrow.
+
+Constraints:
+
+- accounts, password credentials, OAuth state, and sessions are owned by identity only;
+  `shortener-service` and `analytics` must not read identity tables directly
+- session validation contract returns the authenticated account id, email, provider summary, and
+  expiry to upstream callers; identity never returns raw credential or session-secret material
+- session cookies are opaque, `HttpOnly`, `Secure`, `SameSite=Lax`, and rotated on every successful
+  authentication; CSRF uses a non-`HttpOnly` companion cookie plus the `X-CSRF-Token` header
+- `services/web` calls `identity` directly until E15 ships the gateway; the migration to
+  gateway-fronted access is owned by `E15-003` and only requires a single configurable base URL
+  in the web client
+- a separate `identity-maintenance cleanup` command handles retention of expired OAuth states and
+  revoked or expired sessions; identity does not run a background worker in v1
+
+See `docs/identity_auth_service.md` for the full HTTP contract, storage model, OAuth flows, and
+diagrams.
+
 ### `web`
 
 The browser-facing frontend lives in `services/web` as a separate runtime. It should consume the
-shortener and analytics HTTP APIs rather than embedding HTML templates into the Go service.
+shortener, identity, and analytics HTTP APIs rather than embedding HTML templates into the Go
+service.
 
 Constraints:
 
 - UI state and browser rendering live in the frontend service
 - backend contracts stay explicit; missing frontend-facing API needs should be added deliberately
-- the frontend runtime must not bypass the shortener service and talk directly to databases or
-  Redis
+- the frontend runtime must not bypass the shortener or identity service and talk directly to
+  databases or Redis
 - analytics reads for stats belong to the analytics service; the frontend may compose shortener
   metadata and analytics stats server-side
+- auth state in the browser is hydrated through identity's current-session endpoint; the UI must
+  not read the `HttpOnly` session cookie directly
 
 ### `analytics`
 
@@ -277,10 +328,11 @@ Although `analytics` is not user-facing, it exposes a lightweight HTTP server fo
 
 ### Metrics And Health Port Strategy
 
-Both `shortener-service` and `analytics` expose `/health/live`, `/health/ready`, and `/metrics` over
-HTTP. The port layout:
+`shortener-service`, `identity`, and `analytics` all expose `/health/live`, `/health/ready`, and
+`/metrics` over HTTP. The port layout:
 
 - `shortener-service`: single port for API, UI, health, and metrics (default `8080`)
+- `identity`: single port for auth API, health, and metrics (default `8081`)
 - `analytics`: dedicated admin port for health, metrics, and stats API (default `9090`)
 
 In Docker Compose, `shortener` uses `/health/live` and `analytics` uses `/health/ready`. In
@@ -456,6 +508,56 @@ Outcome:
 - analytics are asynchronous
 - analytics handles retries or DLQ strategy outside the user request path
 
+### Authentication
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Web
+    participant Identity
+    participant PG as PostgreSQL
+    participant Provider as Google / Apple
+
+    Browser->>Web: open /auth
+    Web->>Identity: GET /api/v1/auth/csrf
+    Identity-->>Web: csrf_token + companion cookie
+    alt password login
+        Browser->>Web: submit email + password
+        Web->>Identity: POST /api/v1/auth/login (X-CSRF-Token)
+        Identity->>PG: load account + credential
+        Identity->>Identity: verify Argon2id; rotate session
+        Identity-->>Browser: sid + csrf cookies
+    else OAuth login
+        Browser->>Identity: GET /api/v1/auth/oauth/{provider}/start
+        Identity->>PG: persist oauth_state (state/PKCE/nonce hashes)
+        Identity-->>Browser: 302 to provider auth URL
+        Browser->>Provider: authorize
+        Provider-->>Identity: callback with code + state
+        Identity->>PG: consume oauth_state (single-use)
+        Identity->>Provider: exchange code for id_token
+        Identity->>Identity: verify signature, iss, aud, exp, nonce
+        Identity->>PG: find or create account by linking rule
+        Identity-->>Browser: sid + csrf cookies; redirect to /auth/callback
+    end
+```
+
+Outcome:
+
+- session is opaque, server-issued, and stored only as a hash in PostgreSQL
+- session id is rotated on every successful authentication to mitigate fixation
+- CSRF defense uses a double-submit token; cookie-based state-changing endpoints reject mismatched
+  or missing tokens
+- OAuth account-linking only attaches a provider identity to an existing account when the
+  provider's email is verified and matches the existing account's normalized primary email
+
+Failure tolerance:
+
+- expired, revoked, or missing sessions return a generic `unauthorized` error; identity never
+  reveals whether an account exists
+- unknown-account password login still runs a fixed-cost dummy hash to flatten timing
+- expired or single-use OAuth state and PKCE verifier must be present and valid; otherwise the
+  callback fails closed and redirects to the web callback page with an error code
+
 ### Stats Read
 
 ```mermaid
@@ -542,14 +644,21 @@ without a JSON body, since the client is typically a browser following a link.
 
 ## Security And Future Extensions
 
-- no full auth in MVP, but entity boundaries should not block adding users later
-- sensitive payloads and secrets must not be logged
-- future extensions can include auth, custom domains, richer stats, and stronger deploy automation
-  without breaking the modular monolith shape
+- authentication is owned by `identity` (E14): password login, Google OAuth, Apple OAuth, opaque
+  cookie-first sessions with rotation, and CSRF double-submit for state-changing endpoints
+- audit events are emitted as structured logs (signup, login_success, login_failure, logout,
+  session_revocation) so a future shared abuse-control layer can consume them without a contract
+  change
+- sensitive payloads and secrets must not be logged: identity hashes the normalized email for
+  audit correlation and never logs raw passwords, OAuth codes, id_tokens, refresh tokens, or
+  session secrets
+- future extensions can include the API gateway (E15), owned-link enforcement and personal
+  analytics (E16), admin control plane (E17), and richer profile management without breaking the
+  modular monolith shape
 - configuration values (ports, URLs, feature flags) use env vars validated at startup
-- secrets (database passwords, Redis auth, broker credentials) also use env vars in Docker Compose;
-  for Kubernetes deployments, secrets should be sourced from Kubernetes Secrets and mounted into
-  pods via the Helm chart values
+- secrets (database passwords, Redis auth, broker credentials, Apple private key, OAuth client
+  secrets) also use env vars in Docker Compose; for Kubernetes deployments, secrets should be
+  sourced from Kubernetes Secrets and mounted into pods via the Helm chart values
 
 ## Mapping To Epics
 
@@ -572,3 +681,14 @@ sequence follows the roadmap in `docs/url_shortener_codex_plan.md` section 17:
 - `E10` HTTP Transport Variants: optional comparison of `chi` and `gin` after the main flow is stable
 - `E11` Load And Stress Testing: k6 scenarios and performance dashboards
 - `E12` Local Kubernetes And Helm: local cluster runtime after the main local stack is stable
+- `E13` Production-Grade Migrations: schema dump, drift checks, and migration safety defaults
+- `E14` Identity And Authentication: `identity` service, password login, Google and Apple OAuth,
+  cookie-first sessions, CSRF, audit logging, and retention cleanup; see
+  `docs/identity_auth_service.md`
+- `E15` API Gateway And Edge Sessions: single public entrypoint that validates identity sessions
+  and routes to backend services
+- `E16` Owned Links And Personal Analytics: links and analytics scoped to authenticated users
+- `E17` Admin Control Plane And Capabilities: admin-only operations and capability checks
+- `E18` Realtime Stats Transport Variants: SSE and other realtime stats deliveries
+- `E19` End-To-End API System Testing: cross-service integration coverage
+- `E20` Alerting And Incident Notifications: production-style alerts on top of the metrics stack
