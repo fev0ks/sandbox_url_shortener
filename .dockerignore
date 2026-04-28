@@ -1,5 +1,6 @@
 .git
 .gitignore
+.DS_Store
 .idea
 bin
 services/web/node_modules

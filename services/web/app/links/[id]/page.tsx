@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { deleteLinkAction, disableLinkAction, enableLinkAction } from "./actions";
+import { SiteNav } from "@/components/site-nav";
 import { getLinkStatus } from "@/lib/link-state";
 import {
   ApiError,
@@ -58,21 +59,7 @@ export default async function LinkDetailsPage({ params, searchParams }: LinkDeta
 
     return (
       <main className="page-shell">
-        <nav className="topbar">
-          <div>
-            <p className="brand-kicker">Sandbox URL Shortener</p>
-            <strong className="brand-title">Web frontend</strong>
-          </div>
-          <div className="topbar-links">
-            <Link className="nav-pill" href="/">
-              Create link
-            </Link>
-            <Link className="nav-pill" href="/links">
-              Links dashboard
-            </Link>
-            <span className="nav-pill is-active">Link details</span>
-          </div>
-        </nav>
+        <SiteNav active="details" />
 
         <section className="create-shell">
           <div className="create-copy">
@@ -284,21 +271,7 @@ export default async function LinkDetailsPage({ params, searchParams }: LinkDeta
 
     return (
       <main className="page-shell">
-        <nav className="topbar">
-          <div>
-            <p className="brand-kicker">Sandbox URL Shortener</p>
-            <strong className="brand-title">Web frontend</strong>
-          </div>
-          <div className="topbar-links">
-            <Link className="nav-pill" href="/">
-              Create link
-            </Link>
-            <Link className="nav-pill" href="/links">
-              Links dashboard
-            </Link>
-            <span className="nav-pill is-active">Link details</span>
-          </div>
-        </nav>
+        <SiteNav active="details" />
 
         <section className="create-shell">
           <section className="empty-state-card">

@@ -83,12 +83,12 @@ describe("shortener api client", () => {
       ),
     );
 
-    await expect(getLinkStats("019d7439-9656-762e-bc96-10b93d214352")).rejects.toMatchObject<ApiError>({
+    await expect(getLinkStats("019d7439-9656-762e-bc96-10b93d214352")).rejects.toMatchObject({
       name: "ApiError",
       code: "analytics_unavailable",
       statusCode: 503,
       requestId: "req-123",
       message: "Stats backend unavailable.",
-    });
+    } satisfies Partial<ApiError>);
   });
 });

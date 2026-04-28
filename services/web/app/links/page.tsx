@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { SiteNav } from "@/components/site-nav";
 import { ApiError, listLinks } from "@/lib/shortener-api";
 
 type LinksPageProps = {
@@ -35,18 +36,7 @@ export default async function LinksPage({ searchParams }: LinksPageProps) {
 
     return (
       <main className="page-shell">
-        <nav className="topbar">
-          <div>
-            <p className="brand-kicker">Sandbox URL Shortener</p>
-            <strong className="brand-title">Web frontend</strong>
-          </div>
-          <div className="topbar-links">
-            <Link className="nav-pill" href="/">
-              Create link
-            </Link>
-            <span className="nav-pill is-active">Links dashboard</span>
-          </div>
-        </nav>
+        <SiteNav active="links" />
 
         <section className="create-shell">
           <div className="create-copy">
@@ -155,18 +145,7 @@ export default async function LinksPage({ searchParams }: LinksPageProps) {
 
     return (
       <main className="page-shell">
-        <nav className="topbar">
-          <div>
-            <p className="brand-kicker">Sandbox URL Shortener</p>
-            <strong className="brand-title">Web frontend</strong>
-          </div>
-          <div className="topbar-links">
-            <Link className="nav-pill" href="/">
-              Create link
-            </Link>
-            <span className="nav-pill is-active">Links dashboard</span>
-          </div>
-        </nav>
+        <SiteNav active="links" />
 
         <section className="create-shell">
           {notice === "deleted" ? (

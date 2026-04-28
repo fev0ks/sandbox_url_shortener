@@ -66,12 +66,15 @@ body {
 .nav-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 10px 14px;
   border-radius: 999px;
   border: 1px solid var(--border);
+  background: transparent;
   font-size: 0.92rem;
   color: inherit;
   text-decoration: none;
+  line-height: 1.1;
 }
 
 .nav-pill.is-active {
@@ -80,6 +83,11 @@ body {
 
 .nav-pill.is-muted {
   color: var(--muted);
+}
+
+.nav-button {
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .create-shell {
@@ -229,6 +237,12 @@ body {
   gap: 20px;
 }
 
+.auth-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
+  gap: 20px;
+}
+
 .form-card,
 .result-card {
   padding: 32px;
@@ -316,6 +330,45 @@ body {
   opacity: 0.72;
 }
 
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.segmented-control button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.segmented-control button.is-selected {
+  background: var(--accent);
+  color: white;
+}
+
+.provider-row {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.provider-link {
+  width: 100%;
+  justify-content: center;
+  margin-top: 0;
+}
+
 .secondary-button {
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.88);
@@ -396,6 +449,19 @@ body {
   margin: 14px 0 0;
   color: var(--muted);
   line-height: 1.65;
+}
+
+.auth-diagnostic {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.auth-diagnostic code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  word-break: break-word;
 }
 
 .dashboard-meta {
@@ -498,6 +564,7 @@ body {
   }
 
   .create-grid,
+  .auth-grid,
   .details-grid,
   .dashboard-list,
   .dashboard-meta,
