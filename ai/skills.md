@@ -172,3 +172,29 @@ Use for changed-files review after implementation.
 - Skills are specified in repo docs, not implemented as repo-local skill folders
 - There is no `builder` or `qa` role at bootstrap stage
 - `ai/skills.md` is the single project-local source of truth for future skill creation and use
+- MCP log tools project optional underlying `error` diagnostics and grouped `sample_error`;
+  both are redacted and capped by the service before output. Diagnostics are core output
+  fields, not service-specific filters, and do not alter error grouping keys.
+
+- MCP supports stdio and authenticated Streamable HTTP via the official Go SDK. HTTP sessions
+  belong to the client ID resolved from an injected immutable issued-key registry. The local
+  registry is constructed in services/mcp-logs/internal/app/keys.go; updates require MCP rebuild.
+- The independent MCP Compose runtime publishes only on loopback at port 8090. Health checks
+  test the transport, not upstream availability. Pools are lazy; a PostgreSQL outage must not
+  prevent logs/trace tools from serving. Task mcp:* commands operate only on the MCP runtime,
+  except explicit mcp:db:prepare which provisions the local reader and audited views.
+- Database investigation uses three fixed tools and server-owned aliases/DSNs. The service
+  validates PostgreSQL ASTs through a WASM parser, controls read-only transaction scope and
+  bounds results. Repositories own pool/transaction mechanics, safe SQLSTATE errors and scanning.
+  Only mcp_investigation.links is initially approved; no URLs, titles or account identifiers.
+  SQL writes, locks, SELECT star projections and unaudited functions/types/operators are denied.
+  Reader grants, a fixed search path, timeout/cancellation and transaction READ ONLY are required
+  independently of parsing. Results use ordered columns/row arrays and explicit truncation.
+
+- describe_service projects copied descriptor metadata: examples/notes are redacted and
+  length-capped without mutating discovery caches. Repository warnings remain visible alongside
+  cardinality hints. Generic tail filters require exact_filterable metadata; Elasticsearch
+  resolves physical exact-match paths from mapping information and preserves scalar examples
+  and selected values as strings. Analyzed text without an exact subfield is refused.
+- The committed local MCP key is an intentionally public educational/demo fixture, not a
+  production credential. Public repository examples must make this distinction explicit.
