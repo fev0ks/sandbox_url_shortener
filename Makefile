@@ -13,6 +13,7 @@ build:
 	go build ./services/identity/cmd/identity
 	go build ./services/identity/cmd/identity-maintenance
 	go build ./services/analytics/cmd/analytics
+	go build -o bin/mcp-logs ./services/mcp-logs/cmd/mcp-logs
 
 ## test: run all tests
 test:
@@ -25,6 +26,7 @@ lint:
 ## run: start the full Docker Compose stack (prefer task deploy for the canonical local workflow)
 run:
 	docker compose -f $(COMPOSE_FILE) up --build -d
+	docker compose -f $(COMPOSE_FILE) run --rm mcp-db-prepare
 
 ## stop: tear down the Docker Compose stack
 stop:

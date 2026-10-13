@@ -355,6 +355,42 @@ services:
         condition: service_healthy
     restart: "no"
 
+  mcp-logs:
+    build:
+      context: ../..
+      dockerfile: services/mcp-logs/Dockerfile
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      MCP_LOGS_TRANSPORT: http
+      MCP_LOGS_HTTP_ADDRESS: 0.0.0.0:8090
+      MCP_LOGS_HTTP_HOSTS: localhost:8090,127.0.0.1:8090
+      MCP_LOGS_ELASTICSEARCH_URL: http://elasticsearch:9200
+      MCP_LOGS_TEMPO_URL: http://tempo:3200
+      MCP_LOGS_POSTGRES_DSN: postgres://mcp_reader:mcp_reader_local@postgres:5432/shortener?sslmode=disable
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mcp-db-prepare:
+    image: postgres:18-alpine
+    profiles: [tools]
+    environment:
+      PGPASSWORD: shortener
+    volumes:
+      - ../../services/mcp-logs/migrations/postgres/prepare-reader.sql:/prepare-reader.sql:ro
+    command: ["psql", "-h", "postgres", "-U", "shortener", "-d", "shortener", "-f", "/prepare-reader.sql"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   k6:
     image: grafana/k6:1.7.1
     profiles:

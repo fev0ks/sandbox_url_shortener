@@ -74,13 +74,14 @@ tasks:
       - go test ./... -v
 
   build:
-    desc: "Build shortener, identity, identity-maintenance, and analytics binaries"
+    desc: "Build all Go service binaries"
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - go build -o {{.BIN_DIR}}/shortener ./services/shortener/cmd/shortener
       - go build -o {{.BIN_DIR}}/identity ./services/identity/cmd/identity
       - go build -o {{.BIN_DIR}}/identity-maintenance ./services/identity/cmd/identity-maintenance
       - go build -o {{.BIN_DIR}}/analytics ./services/analytics/cmd/analytics
+      - go build -o {{.BIN_DIR}}/mcp-logs ./services/mcp-logs/cmd/mcp-logs
 
   identity:cleanup:
     desc: "Run identity retention cleanup once using DB_DSN and identity retention env"
@@ -139,13 +140,44 @@ tasks:
     desc: "Build the runtime images used by the local Docker Compose stack"
     cmds:
       - task: verify
-      - docker compose -f {{.COMPOSE_FILE}} build shortener identity analytics web
+      - docker compose -f {{.COMPOSE_FILE}} build shortener identity analytics web mcp-logs
 
   deploy:
     desc: "Build images, run migrations, start the stack, and execute smoke checks"
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} up --build -d
+      - task: mcp:db:prepare
       - task: smoke
+
+  mcp:start:
+    desc: "Build and start only the HTTP MCP service, even when upstreams are unavailable"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} up -d --build --no-deps mcp-logs
+
+  mcp:restart:
+    desc: "Rebuild and recreate only MCP without restarting its clients or other services"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} up -d --build --force-recreate --no-deps mcp-logs
+
+  mcp:status:
+    desc: "Show HTTP MCP service status"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} ps -a mcp-logs
+
+  mcp:logs:
+    desc: "Follow HTTP MCP service logs"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} logs --follow --tail=100 mcp-logs
+
+  mcp:stop:
+    desc: "Stop only the HTTP MCP service"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} stop mcp-logs
+
+  mcp:db:prepare:
+    desc: "Prepare the dedicated PostgreSQL reader and audited views on an existing local database"
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm mcp-db-prepare
 
   smoke:
     desc: "Run HTTP smoke checks against the local stack"
@@ -173,6 +205,7 @@ tasks:
         check_url shortener http://localhost:8080/health/ready
         check_url identity http://localhost:8081/health/ready
         check_url analytics http://localhost:9090/health/ready
+        check_url mcp http://localhost:8090/health/ready
         check_url web "http://localhost:${web_port}"
 
   load:smoke:
