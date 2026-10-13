@@ -16,15 +16,25 @@ package logger
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 
 	"sandbox_url_shortener/internal/platform/requestmeta"
 )
 
-// New creates a slog.Logger with JSON output, base attributes, and the given level.
-// The returned logger automatically enriches records from context.
+// New creates a slog.Logger with JSON output to stdout, base attributes, and the
+// given level. The returned logger automatically enriches records from context.
 func New(level, service, env string) *slog.Logger {
+	return NewWithWriter(os.Stdout, level, service, env)
+}
+
+// NewWithWriter behaves like New but sends output to the given writer.
+//
+// Use it when stdout is reserved for something else. A process speaking a
+// line-oriented protocol on stdout (for example an MCP server on stdio) must
+// log to os.Stderr, otherwise log records corrupt the protocol stream.
+func NewWithWriter(w io.Writer, level, service, env string) *slog.Logger {
 	var lvl slog.Level
 	switch level {
 	case "DEBUG":
@@ -37,7 +47,7 @@ func New(level, service, env string) *slog.Logger {
 		lvl = slog.LevelInfo
 	}
 
-	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	base := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: lvl})
 
 	return slog.New(&ctxHandler{Handler: base}).With(
 		slog.String("service", service),
@@ -70,4 +80,3 @@ func (h *ctxHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 func (h *ctxHandler) WithGroup(name string) slog.Handler {
 	return &ctxHandler{Handler: h.Handler.WithGroup(name)}
 }
-
